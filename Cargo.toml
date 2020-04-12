@@ -1,0 +1,19 @@
+[package]
+name = "apriori"
+version = "0.1.0"
+authors = ["Daniel Shiposha <shipdan@yandex.ru>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+kiss3d = "0.23"
+structopt = "0.3.13"
+lazy_static = "1.4.0"
+css-color-parser = "0.1.2"
+rustyline = "6.0.0"
+log = "0.4.8"
+chrono = "0.4"
+postgres = { version = "0.17.2", features=["with-chrono-0_4"] }
+clap = "*"
+nalgebra = "*"
