@@ -7,6 +7,8 @@ pub type Vector = Vector3<Coord>;
 pub type Color = Point3<Coord>;
 // pub type Point = Point3<Coord>;
 
+pub type SessionId = i32;
+
 pub enum TimeFormat {
     VirtualTime(chrono::Duration),
     VirtualTimeStep(chrono::Duration),

@@ -13,7 +13,19 @@ pub enum Error {
     MessageVersion(clap::Error),
     CliParse(super::cli::ParseError),
     CliRead(rustyline::error::ReadlineError),
-    PostgreSQL(postgres::Error),
+    VirtualTime(Description),
+    VirtualTimeStep(Description),
+    Storage(postgres::Error),
+    SetupSchema(postgres::Error),
+    SessionCreate(postgres::Error),
+    SessionUpdateAccessTime(postgres::Error),
+    SessionSave(Description),
+    SessionLoad(postgres::Error),
+    SessionRename(postgres::Error),
+    SessionUnlock(postgres::Error),
+    SessionList(postgres::Error),
+    SessionGet(postgres::Error),
+    SessionDelete(postgres::Error),
 }
 
 impl From<clap::Error> for Error {
@@ -40,7 +52,7 @@ impl From<rustyline::error::ReadlineError> for Error {
 
 impl From<postgres::Error> for Error {
     fn from(err: postgres::Error) -> Self {
-        Self::PostgreSQL(err)
+        Self::Storage(err)
     }
 }
 
@@ -72,7 +84,19 @@ impl fmt::Display for Error {
             Error::MessageVersion(version) => write!(f, "[message version] {}", version),
             Error::CliParse(err) => write!(f, "[cli parse] {}", err),
             Error::CliRead(err) => write!(f, "[cli] {}", err),
-            Error::PostgreSQL(err) => write!(f, "[postgresql] {}", err),
+            Error::VirtualTime(desc) => write!(f, "[message] unable to set virtual time: {}", desc),
+            Error::VirtualTimeStep(desc) => write!(f, "[message] unable to set virtual time step: {}", desc),
+            Error::Storage(err) => write!(f, "[storage] {}", err),
+            Error::SetupSchema(err) => write!(f, "[storage] unable to setup schema: {}", err),
+            Error::SessionCreate(err) => write!(f, "[stirage] unable to create new session: {}", err),
+            Error::SessionUpdateAccessTime(err) => write!(f, "[storage] unable to update session access time: {}", err),
+            Error::SessionSave(desc) => write!(f, "[storage] unable to save the session: {}", desc),
+            Error::SessionLoad(desc) => write!(f, "[storage] unable to load the session: {}", desc),
+            Error::SessionRename(err) => write!(f, "[storage] unable to find the session: {}", err),
+            Error::SessionUnlock(err) => write!(f, "[storage] unable to unlock the session: {}", err),
+            Error::SessionList(err) => write!(f, "[storage] unable to display session list: {}", err),
+            Error::SessionGet(err) => write!(f, "[storage] unable to display current session: {}", err),
+            Error::SessionDelete(err) => write!(f, "[storage] unable to delete the session: {}", err),
         }
     }
 }

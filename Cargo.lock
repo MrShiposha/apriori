@@ -69,6 +69,7 @@ dependencies = [
  "postgres",
  "rustyline",
  "structopt",
+ "time",
 ]
 
 [[package]]

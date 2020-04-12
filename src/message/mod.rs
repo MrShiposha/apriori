@@ -101,6 +101,41 @@ messages! {
     #[cli(name = "list-sessions", about = "list all sessions")]
     message ListSessions {}
 
+    #[cli(name = "session", about = "current session name")]
+    message GetSession {}
+
+    #[cli(name = "save-session-as", about = "save current session with new name")]
+    message SaveSession {
+        /// New session's name
+        #[structopt(short, long)]
+        pub name: String
+    }
+
+    #[cli(name = "load-session", about = "load existing session")]
+    message LoadSession {
+        /// Session's name
+        #[structopt(short, long)]
+        pub name: String
+    }
+
+    #[cli(name = "rename-session", about = "rename session")]
+    message RenameSession {
+        /// Old session's name
+        #[structopt(short, long)]
+        pub old_name: String,
+
+        /// New session's name
+        #[structopt(short, long)]
+        pub new_name: String
+    }
+
+    #[cli(name = "delete-session", about = "delete session")]
+    message DeleteSession {
+        /// Session's name
+        #[structopt(short, long)]
+        pub name: String
+    }
+
     #[cli(name = "add-obj", about = "add new object to the scene")]
     message AddObject {
         /// Object's name

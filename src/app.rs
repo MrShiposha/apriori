@@ -12,6 +12,7 @@ use kiss3d::{
 };
 use nalgebra::{Point3, Point2};
 use log::{
+    trace,
     info,
     error
 };
@@ -25,7 +26,7 @@ use super::{
     Error,
     cli,
     db,
-    r#type::{Color, TimeFormat}
+    r#type::{Color, TimeFormat, SessionId}
 };
 
 const LOG_TARGET: &'static str = "application";
@@ -37,8 +38,8 @@ const STORAGE_CONNECTION_STRING: &'static str = "host=localhost user=postgres";
 
 lazy_static! {
     pub static ref APP_CLI_PROMPT: String = format!("{}> ", APP_NAME);
-    static ref ACCESS_UPDATE_TIME: chrono::Duration = chrono::Duration::seconds(30);
-    static ref SESSION_MAX_HANG_TIME: chrono::Duration = chrono::Duration::seconds(
+    pub static ref ACCESS_UPDATE_TIME: chrono::Duration = chrono::Duration::seconds(30);
+    pub static ref SESSION_MAX_HANG_TIME: chrono::Duration = chrono::Duration::seconds(
         ACCESS_UPDATE_TIME.num_seconds() + 10
     );
 }
@@ -80,19 +81,28 @@ pub struct App {
     window: Window,
     camera: FirstPerson,
     state: Shared<State>,
+    real_time: chrono::Duration,
+    last_session_update_time: chrono::Duration,
     virtual_time: chrono::Duration,
     virtual_time_step: chrono::Duration,
     frame_delta_time: chrono::Duration,
-    storage_mgr: db::StorageManager,
     is_stats_enabled: bool,
     frame_deltas_ms_sum: usize, 
     frame_count: usize,
+    storage_mgr: db::StorageManager,
+    session_id: SessionId,
 }
 
 impl App {
     pub fn new(log_filter: log::LevelFilter) -> Self {
         super::logger::Logger::init(log_filter)
             .expect("unable to initialize logging system");
+
+        let mut storage_mgr = db::StorageManager::connect(STORAGE_CONNECTION_STRING)
+            .expect("unable to connect to storage");
+
+        let session_id = storage_mgr.create_new_session()
+            .expect("unable to create new session");
 
         Self {
             window: Window::new_with_setup(
@@ -106,28 +116,32 @@ impl App {
             ),
             camera: FirstPerson::new(Point3::new(0.0, 1.0, 0.0), Point3::origin()),
             state: State::Paused.into(),
+            real_time: chrono::Duration::zero(),
+            last_session_update_time: chrono::Duration::zero(),
             virtual_time: chrono::Duration::zero(),
             virtual_time_step: chrono::Duration::seconds(1),
             frame_delta_time: chrono::Duration::milliseconds(0),
-            storage_mgr: db::StorageManager::connect(STORAGE_CONNECTION_STRING)
-                .expect("unable to connect to storage"),
             is_stats_enabled: true,
             frame_deltas_ms_sum: 0,
-            frame_count: 0
+            frame_count: 0,
+            storage_mgr,
+            session_id
         }
     }
 
     pub fn run(&mut self, history: Option<PathBuf>) {
-        if let Err(err) = self.storage_mgr.setup_schema(*SESSION_MAX_HANG_TIME) {
-            return error! {
-                target: LOG_TARGET,
-                "unable to setup apriori schema: {}", err
-            };
-        }
-
         let cli = cli::Observer::new(self.state.share(), history);
 
         loop {
+            let loop_begin = time::precise_time_ns();
+
+            if let Err(err) = self.update_session_access_time() {
+                error! {
+                    target: LOG_TARGET,
+                    "{}", err
+                }
+            }
+
             self.handle_window_events();
 
             let state = *shared_access![self.state];
@@ -150,6 +164,10 @@ impl App {
                 },
                 State::Off => break
             }
+
+            let loop_end = time::precise_time_ns();
+            let loop_time = loop_end - loop_begin;
+            self.real_time = self.real_time + chrono::Duration::nanoseconds(loop_time as i64);
         }
 
         cli.join();
@@ -171,19 +189,38 @@ impl App {
             Message::VirtualTime(msg) => self.handle_virtual_time(state, msg),
             Message::GetFrameDeltaTime(_) => {
                 println!("{}", TimeFormat::FrameDelta(self.frame_delta_time));
+                Ok(())
             },
             Message::GetFrameCount(_) => {
                 println!("{}", self.frame_count);
+                Ok(())
             },
             Message::GetFpms(_) => {
                 println!("{}", self.frame_per_ms());
+                Ok(())
             },
-            Message::ListSessions(_) => self.list_sessions(),
+            Message::ListSessions(_) => {
+                println!("\t-- sessions list --");
+                self.storage_mgr.list_sessions()
+            },
+            Message::GetSession(_) => {
+                self.storage_mgr.get_session(self.session_id)
+            }
+            Message::SaveSession(msg) => {
+                self.storage_mgr.save_session(self.session_id, &msg.name)
+            },
+            Message::LoadSession(msg) => {
+                self.handle_load_session(msg)
+            },
+            Message::RenameSession(msg) => {
+                self.storage_mgr.rename_session(&msg.old_name, &msg.new_name)
+            },
+            Message::DeleteSession(msg) => {
+                self.storage_mgr.delete_session(&msg.name)
+            },
             Message::AddObject(msg) if state.is_run()  => self.add_obj(msg),
             unexpected => return Err(Error::UnexpectedMessage(unexpected))
         }
-
-        Ok(())
     }
 
     fn check_window_opened(&mut self) {
@@ -206,19 +243,23 @@ impl App {
         *shared_access![mut self.state] = State::Completed;
     }
 
-    fn shutdown(&mut self) {
+    fn shutdown(&mut self) -> Result<()> {
         *shared_access![mut self.state] = State::Off;
+
+        self.storage_mgr.unlock_session(self.session_id)
     }
 
-    fn continue_simulation(&mut self) {
+    fn continue_simulation(&mut self) -> Result<()> {
         *shared_access![mut self.state] = State::Simulating;
+        Ok(())
     }
 
-    fn pause_simulation(&mut self) {
+    fn pause_simulation(&mut self) -> Result<()> {
         *shared_access![mut self.state] = State::Paused;
+        Ok(())
     }
 
-    fn add_obj(&mut self, msg: message::AddObject) {
+    fn add_obj(&mut self, msg: message::AddObject) -> Result<()> {
         println!("new object: '{}'", msg.name);
         println!("location: {}", msg.location);
         
@@ -229,31 +270,36 @@ impl App {
         if let Some(color) = msg.color {
             println!("color: {}", color);
         }
+
+        Ok(())
     }
 
-    fn handle_virtual_time_step(&mut self, state: State, msg: message::VirtualTimeStep) {
+    fn handle_virtual_time_step(&mut self, state: State, msg: message::VirtualTimeStep) -> Result<()> {
         match msg.step {
             Some(step) => if state.is_run() { 
                 self.virtual_time_step = if msg.reverse {
                     -step
                 } else {
                     step
-                }
+                };
+
+                Ok(())
             } else {
-                error! {
-                    target: LOG_TARGET,
-                    "setting virtual time step after the simulation has complete is forbidden"
-                }
+                Err(Error::VirtualTimeStep(
+                    "setting virtual time step after the simulation has complete is forbidden".into()
+                ))
             },
             None => if msg.reverse {
                 println!("{}", TimeFormat::VirtualTimeStep(-self.virtual_time_step));
+                Ok(())
             } else {
                 println!("{}", TimeFormat::VirtualTimeStep(self.virtual_time_step));
+                Ok(())
             }
         }
     }
 
-    fn handle_virtual_time(&mut self, state: State, msg: message::VirtualTime) {
+    fn handle_virtual_time(&mut self, state: State, msg: message::VirtualTime) -> Result<()> {
         let time = if msg.week.is_none()
                     && msg.day.is_none()
                     && msg.hour.is_none()
@@ -263,9 +309,11 @@ impl App {
             if msg.origin {
                 chrono::Duration::zero()
             } else if msg.reverse {
-                return println!("{}", TimeFormat::VirtualTime(-self.virtual_time));
+                println!("{}", TimeFormat::VirtualTime(-self.virtual_time));
+                return Ok(());
             } else {
-                return println!("{}", TimeFormat::VirtualTime(self.virtual_time));
+                println!("{}", TimeFormat::VirtualTime(self.virtual_time));
+                return Ok(());
             }
         } else {
             chrono::Duration::weeks(msg.week.unwrap_or(0))
@@ -281,23 +329,22 @@ impl App {
                 -time
             } else {
                 time
-            }
+            };
+
+            Ok(())
         } else {
-            error! {
-                target: LOG_TARGET,
-                "setting virtual time after the simulation has complete is forbidden"
-            }
+            Err(Error::VirtualTime(
+                "setting virtual time after the simulation has complete is forbidden".into()
+            ))
         }
     }
 
-    fn list_sessions(&mut self) {
-        println!("\t-- sessions list --");
-        if let Err(err) = self.storage_mgr.list_sessions() {
-            error! {
-                target: LOG_TARGET,
-                "unable to list sessions: {}", err
-            }
-        }
+    fn handle_load_session(&mut self, msg: message::LoadSession) -> Result<()> {
+        let new_session_id = self.storage_mgr.load_session(&msg.name)?;
+        self.storage_mgr.unlock_session(self.session_id)?;
+        self.session_id = new_session_id;
+
+        Ok(())
     }
 
     fn draw_stats(&mut self) {
@@ -328,26 +375,49 @@ impl App {
     fn handle_window_events(&mut self) {
         for event in self.window.events().iter() {
             match event.value {
-                WindowEvent::Key(key, action, mods) => self.handle_key(key, action, mods),
+                WindowEvent::Key(key, action, mods) => if let Err(err) = self.handle_key(key, action, mods) {
+                    error! {
+                        target: LOG_TARGET,
+                        "{}", err
+                    }
+                },
                 _ => {}
             }
         }
     }
 
-    fn handle_key(&mut self, key: Key, action: Action, modifiers: Modifiers) {
+    fn update_session_access_time(&mut self) -> Result<()> {
+        if self.real_time.num_milliseconds() >= (
+            self.last_session_update_time.num_milliseconds()
+            + ACCESS_UPDATE_TIME.num_milliseconds()
+        ) {
+            trace! {
+                target: LOG_TARGET,
+                "update session access time"
+            };
+
+            self.storage_mgr.update_session_access_time(self.session_id)?;
+            self.last_session_update_time = self.real_time;
+        }
+
+        Ok(())
+    }
+
+    fn handle_key(&mut self, key: Key, action: Action, modifiers: Modifiers) -> Result<()> {
         match key {
             Key::P if matches![action, Action::Press] => {
                 let state = *shared_access![self.state];
                 match state {
                     State::Simulating => self.pause_simulation(),
                     State::Paused => self.continue_simulation(),
-                    _ => {}
+                    _ => Ok(())
                 }
             },
             Key::C if modifiers.contains(Modifiers::Control) && matches![action, Action::Press] => {
                 self.close();
+                Ok(())
             }
-            _ => {}
+            _ => Ok(())
         }
     }
 
