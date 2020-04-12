@@ -3,7 +3,7 @@ CREATE SCHEMA IF NOT EXISTS apriori;
 CREATE TABLE IF NOT EXISTS apriori.session
 (
 	session_id serial PRIMARY KEY,
-	session_name varchar(50) UNIQUE NOT NULL,
+	session_name varchar(50) UNIQUE,
 	last_access timestamptz NOT NULL,
 	is_locked boolean NOT NULL
 );

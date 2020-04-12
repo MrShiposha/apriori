@@ -28,6 +28,7 @@ impl StorageManager {
             r#"
                 SELECT session_name, last_access 
                 FROM apriori.session
+                WHERE session_name IS NOT NULL
                 ORDER BY last_access
             "#, 
             &[]
