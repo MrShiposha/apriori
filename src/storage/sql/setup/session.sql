@@ -6,6 +6,17 @@ CREATE TABLE IF NOT EXISTS {schema_name}.session
 	is_locked boolean NOT NULL
 );
 
+CREATE OR REPLACE FUNCTION is_session_hanged(
+    session_last_access timestamptz
+) RETURNS boolean
+AS $$
+    BEGIN
+        RETURN (
+            (SELECT EXTRACT (EPOCH FROM (now() - session_last_access)) > {session_max_hang_time})
+        );
+    END
+$$ LANGUAGE plpgsql;
+
 CREATE OR REPLACE FUNCTION {schema_name}.create_new_session(name varchar(50))
 RETURNS integer
 AS $$
@@ -71,16 +82,18 @@ AS $$
     DECLARE
         load_session_id integer;
         load_session_name varchar(50);
+        load_session_last_access timestamptz;
         is_load_session_locked boolean;
     BEGIN
-        SELECT session_id, session_name, is_locked
-        INTO load_session_id, load_session_name, is_load_session_locked
+        SELECT session_id, session_name, last_access, is_locked
+        INTO load_session_id, load_session_name, load_session_last_access, is_load_session_locked
         FROM {schema_name}.session
         WHERE session_name = name;
 
         IF (load_session_id IS NULL) THEN
             RAISE 'session `%` is not found', name;
-        ELSIF (is_load_session_locked) THEN
+        ELSIF (is_load_session_locked AND NOT is_session_hanged(load_session_last_access)) 
+        THEN
             RAISE 'unable to load locked session';
         ELSE
             UPDATE {schema_name}.session
@@ -108,16 +121,18 @@ CREATE OR REPLACE PROCEDURE {schema_name}.delete_session(name varchar(50))
 AS $$
     DECLARE
         del_session_id integer;
+        del_session_last_access timestamptz;
         is_del_session_locked boolean;
     BEGIN
-        SELECT session_id, is_locked
-        INTO del_session_id, is_del_session_locked
+        SELECT session_id, last_access, is_locked
+        INTO del_session_id, del_session_last_access, is_del_session_locked
         FROM {schema_name}.session
         WHERE session_name = name;
 
         IF (del_session_id IS NULL) THEN
             RAISE 'session `%` is not found', name;
-        ELSIF (is_del_session_locked) THEN
+        ELSIF (is_del_session_locked AND NOT is_session_hanged(del_session_last_access)) 
+        THEN
             RAISE 'unable to delete locked session';
         ELSE
             DELETE FROM {schema_name}.session

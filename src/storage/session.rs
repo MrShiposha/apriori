@@ -5,6 +5,23 @@ use crate::{
     r#type::SessionId
 };
 
+macro_rules! psql_err_code {
+    (
+        $err:path: $psql_err:expr => match code {
+            $($sql_state_head:path => $err_expr_head:expr),+
+        }
+    ) => {
+        match $psql_err.code() {
+            $(
+                Some(code) if *code == $sql_state_head => {
+                    $err($err_expr_head)
+                }
+            )+
+            _ => $err($psql_err.to_string())
+        }
+    };
+}
+
 pub struct Session<'storage> {
     manager: &'storage mut super::StorageManager
 }
@@ -37,17 +54,11 @@ impl<'storage> Session<'storage> {
     }
 
     pub fn save(&mut self, id: SessionId, name: &str) -> Result<()> {
-        match self.manager.psql.execute(&self.manager.save_session, &[&id, &name]) {
-            Ok(_) => Ok(()),
-            Err(err) => match err.code() {
-                Some(code) if *code == SqlState::UNIQUE_VIOLATION => {
-                    Err(Error::SessionSave(
-                        format!("session with name `{}` already exists", name)
-                    ))
-                },
-                _ => Err(Error::SessionSave(err.to_string()))
-            }       
-        }
+        self.manager.psql.execute(&self.manager.save_session, &[&id, &name])
+            .map(|_| {})
+            .map_err(|err| psql_err_code![Error::SessionSave: err => match code {
+                SqlState::UNIQUE_VIOLATION => format!("session with name `{}` already exists", name)
+            }])
     }
 
     pub fn load(&mut self, name: &str) -> Result<SessionId> {

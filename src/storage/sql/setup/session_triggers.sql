@@ -4,21 +4,22 @@ AS $$
 		UPDATE {schema_name}.session 
 		SET is_locked=false
 		WHERE is_locked=true 
-		AND ((SELECT EXTRACT (EPOCH FROM (now() - last_access)) > {session_max_hang_time}));
+		AND is_session_hanged(last_access);
 	END 
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE PROCEDURE {schema_name}.delete_session_dependencies(id integer)
 AS $$
+	DECLARE
+		object_id_to_rm bigint;
     BEGIN
         --- TODO
-		-- SELECT object_id
-		-- INTO object_id_to_rm
-		-- FROM {schema_name}.object
-		-- WHERE object_session_id=id;
+		-- DELETE FROM {schema_name}.object
+		-- WHERE session_fk_id=id 
+		-- RETURNING object_id INTO object_id_to_rm;
 
 		-- DELETE FROM {schema_name}.location
-		-- WHERE fk_object_id=object_id_to_rm;
+		-- WHERE object_fk_id=object_id_to_rm;
 
 		-- DELETE FROM {schema_name}.collision
 		-- WHERE fk_first_object_id=object_id_to_rm;

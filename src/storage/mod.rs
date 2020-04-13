@@ -102,11 +102,11 @@ impl StorageManager {
                 {session_triggers}
             "#,
             schema = schema_query![include_str!("sql/setup/schema.sql")],
-            session = schema_query![include_str!("sql/setup/session.sql")],
-            session_triggers = schema_query! {
-                include_str!("sql/setup/session_triggers.sql"),
+            session = schema_query! {
+                include_str!("sql/setup/session.sql"),
                 session_max_hang_time = app::SESSION_MAX_HANG_TIME.num_seconds()
-            }
+            },
+            session_triggers = schema_query![include_str!("sql/setup/session_triggers.sql")]
         };
 
         psql.batch_execute(setup_query.as_str())
