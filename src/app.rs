@@ -25,7 +25,7 @@ use super::{
     Result,
     Error,
     cli,
-    db,
+    storage::StorageManager,
     r#type::{Color, TimeFormat, SessionId}
 };
 
@@ -89,7 +89,7 @@ pub struct App {
     is_stats_enabled: bool,
     frame_deltas_ms_sum: usize, 
     frame_count: usize,
-    storage_mgr: db::StorageManager,
+    storage_mgr: StorageManager,
     session_id: SessionId,
 }
 
@@ -98,10 +98,11 @@ impl App {
         super::logger::Logger::init(log_filter)
             .expect("unable to initialize logging system");
 
-        let mut storage_mgr = db::StorageManager::connect(STORAGE_CONNECTION_STRING)
+        let mut storage_mgr = StorageManager::setup(STORAGE_CONNECTION_STRING)
             .expect("unable to connect to storage");
 
-        let session_id = storage_mgr.create_new_session()
+        let default_name = None;
+        let session_id = storage_mgr.session().new(default_name)
             .expect("unable to create new session");
 
         Self {
@@ -201,22 +202,25 @@ impl App {
             },
             Message::ListSessions(_) => {
                 println!("\t-- sessions list --");
-                self.storage_mgr.list_sessions()
+                self.storage_mgr.session().print_list()
             },
             Message::GetSession(_) => {
-                self.storage_mgr.get_session(self.session_id)
+                self.storage_mgr.session().get(self.session_id)
+            }
+            Message::NewSession(msg) => {
+                self.handle_new_session(msg)
             }
             Message::SaveSession(msg) => {
-                self.storage_mgr.save_session(self.session_id, &msg.name)
+                self.storage_mgr.session().save(self.session_id, &msg.name)
             },
             Message::LoadSession(msg) => {
                 self.handle_load_session(msg)
             },
             Message::RenameSession(msg) => {
-                self.storage_mgr.rename_session(&msg.old_name, &msg.new_name)
+                self.storage_mgr.session().rename(&msg.old_name, &msg.new_name)
             },
             Message::DeleteSession(msg) => {
-                self.storage_mgr.delete_session(&msg.name)
+                self.storage_mgr.session().delete(&msg.name)
             },
             Message::AddObject(msg) if state.is_run()  => self.add_obj(msg),
             unexpected => return Err(Error::UnexpectedMessage(unexpected))
@@ -246,7 +250,7 @@ impl App {
     fn shutdown(&mut self) -> Result<()> {
         *shared_access![mut self.state] = State::Off;
 
-        self.storage_mgr.unlock_session(self.session_id)
+        self.storage_mgr.session().unlock(self.session_id)
     }
 
     fn continue_simulation(&mut self) -> Result<()> {
@@ -339,9 +343,17 @@ impl App {
         }
     }
 
+    fn handle_new_session(&mut self, msg: message::NewSession) -> Result<()> {
+        let new_session_id = self.storage_mgr.session().new(msg.name)?;
+        self.storage_mgr.session().unlock(self.session_id)?;
+        self.session_id = new_session_id;
+        
+        Ok(())
+    }
+
     fn handle_load_session(&mut self, msg: message::LoadSession) -> Result<()> {
-        let new_session_id = self.storage_mgr.load_session(&msg.name)?;
-        self.storage_mgr.unlock_session(self.session_id)?;
+        let new_session_id = self.storage_mgr.session().load(&msg.name)?;
+        self.storage_mgr.session().unlock(self.session_id)?;
         self.session_id = new_session_id;
 
         Ok(())
@@ -396,7 +408,7 @@ impl App {
                 "update session access time"
             };
 
-            self.storage_mgr.update_session_access_time(self.session_id)?;
+            self.storage_mgr.session().update_access_time(self.session_id)?;
             self.last_session_update_time = self.real_time;
         }
 

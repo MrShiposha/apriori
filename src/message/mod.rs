@@ -104,9 +104,16 @@ messages! {
     #[cli(name = "session", about = "current session name")]
     message GetSession {}
 
+    #[cli(name = "new-session", about = "create new session")]
+    message NewSession {
+        /// New session's name
+        #[structopt(short, long)]
+        pub name: Option<String>
+    }
+
     #[cli(name = "save-session-as", about = "save current session with new name")]
     message SaveSession {
-        /// New session's name
+        /// Session's name
         #[structopt(short, long)]
         pub name: String
     }

@@ -6,14 +6,14 @@ CREATE TABLE IF NOT EXISTS {schema_name}.session
 	is_locked boolean NOT NULL
 );
 
-CREATE OR REPLACE FUNCTION {schema_name}.create_new_session()
+CREATE OR REPLACE FUNCTION {schema_name}.create_new_session(name varchar(50))
 RETURNS integer
 AS $$
     DECLARE
         new_session_id integer;
     BEGIN
         INSERT INTO {schema_name}.session
-        VALUES(DEFAULT, NULL, now(), true) 
+        VALUES(DEFAULT, name, now(), true) 
         RETURNING session_id INTO new_session_id;
 
         RETURN new_session_id;

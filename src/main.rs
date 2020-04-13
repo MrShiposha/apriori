@@ -2,7 +2,7 @@ use structopt::StructOpt;
 
 mod app;
 mod cli;
-mod db;
+mod storage;
 mod message;
 mod r#type;
 mod error;
