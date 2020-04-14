@@ -148,13 +148,16 @@ pub fn parse_time(src: &str) -> Result<chrono::Duration> {
 
             component.chars().position(|c| c.is_ascii_alphabetic())
                 .map(|unit_pos| (&component[..unit_pos], &component[unit_pos..]))
-                .ok_or(parse_error!("expected time unit after `{}`", component))
+                .ok_or(match component.parse::<RawTime>() {
+                    Ok(_) => parse_error!("expected time unit after `{}`", component),
+                    Err(err) => parse_error!("`{}`: {}", component, err)
+                })
         })
         .scan(None, |last_time_unit, unit_split_result| match unit_split_result {
             Ok((value, unit)) => {
                 let value = match value.parse::<RawTime>() {
                     Ok(value) => value,
-                    Err(err) => return scan_error!("unable to parse time component: {}", err)
+                    Err(err) => return scan_error!("`{}`: {}", value, err)
                 };
 
                 let time_component = match TimeUnit::from_str(unit) {
