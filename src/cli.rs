@@ -188,25 +188,6 @@ pub fn parse_time(src: &str) -> Result<chrono::Duration> {
                 Ok(time + time_component?)
             }
         )
-    // let unit_pos = src.chars().position(|c| c.is_ascii_alphabetic())
-    //     .ok_or(ParseError::Time(format!("time unit not found")))?;
-
-    // let num = &src[..unit_pos];
-    // let unit = &src[unit_pos..];
-
-    // let num = num.parse()?;
-
-    // let time = match unit {
-    //     "ms" => chrono::Duration::milliseconds(num),
-    //     "s" => chrono::Duration::seconds(num),
-    //     "min" => chrono::Duration::minutes(num),
-    //     "h" => chrono::Duration::hours(num),
-    //     "d" => chrono::Duration::days(num),
-    //     "w" => chrono::Duration::weeks(num),
-    //     _ => return Err(ParseError::Time(format!("`{}`: unknown time unit", src)))
-    // };
-
-    // Ok(time)
 }
 
 pub fn default_editor() -> Editor {
