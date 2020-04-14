@@ -31,6 +31,7 @@ use super::{
         Color, 
         RawTime,
         TimeFormat, 
+        TimeUnit,
         SessionId
     }
 };
@@ -194,6 +195,7 @@ impl App {
                     .max()
                     .unwrap();
 
+                println!();
                 for (name, about) in Message::cli_list() {
                     print!("\t{:<width$}", name, width = max_name);
                     match about {
@@ -211,6 +213,34 @@ impl App {
             Message::Pause(_)
             | Message::PauseShort(_) if state.is_run() => self.pause_simulation(),
             Message::Shutdown(_) => self.shutdown(),
+            Message::TimeFormat(_) => {
+                println!();
+                println!("\tDigit: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9");
+                println!("\tTimeUnit:");
+
+                let units = TimeUnit::variants_and_aliases();
+                let unit_max_width = units.iter()
+                    .map(|aliases| aliases.iter().map(|alias| alias.len()).max().unwrap())
+                    .max()
+                    .unwrap();
+
+                for unit_aliases in units {
+                    print!("\t");
+                    for alias in *unit_aliases {
+                        print!(
+                            " {:^width$} |",
+                            alias,
+                            width = unit_max_width
+                        );
+                    }
+                    println!();
+                }
+                println!("\tTimeComponent: [-]{{Digit}}{{TimeUnit}}");
+                println!("\tTimeInputFormat: {{TimeComponent}}[:{{TimeComponent}}]*");
+                println!();
+                
+                Ok(())
+            },
             Message::VirtualTimeStep(msg) => self.handle_virtual_time_step(state, msg),
             Message::VirtualTime(msg) => self.handle_virtual_time(state, msg),
             Message::GetFrameDeltaTime(_) => {
@@ -226,7 +256,7 @@ impl App {
                 Ok(())
             },
             Message::ListSessions(_) => {
-                println!("\t-- sessions list --");
+                println!("\n\t-- sessions list --");
                 self.storage_mgr.session().print_list()
             },
             Message::GetSession(_) => {
@@ -301,7 +331,7 @@ impl App {
 
         println!("new object: '{}'", name);
         println!("location: {}", msg.location);
-        println!("first appearance: {}", TimeFormat::VirtualTimeShort(msg.t.unwrap_or(self.virtual_time)));
+        println!("first appearance: {}", TimeFormat::VirtualTimeShort(msg.time.unwrap_or(self.virtual_time)));
         println!("color: {}", msg.color.unwrap_or(graphics::random_color()));
         println!("radius: {}", msg.radius);
         println!("mass: {}", msg.mass);

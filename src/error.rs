@@ -1,4 +1,5 @@
 use std::fmt;
+use super::message;
 
 pub type Description = String;
 
@@ -120,10 +121,14 @@ impl From<css_color_parser::ColorParseError> for ParseError {
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Message(err) => write!(f, "unable to parse message: {}", err),
-            Self::Vector(desc) => write!(f, "unable to parse vector: {}", desc),
-            Self::Color(err) => write!(f, "unable to parse color: {}", err),
-            Self::Time(desc) => write!(f, "unable to parse time unit: {}", desc)
+            Self::Message(err) => write!(f, "{}", err),
+            Self::Vector(desc) => write!(f, "unable to parse vector: {}\nHINT: vector format is {{x}},{{y}},{{z}}", desc),
+            Self::Color(err) => write!(f, "unable to parse color: {}\nHINT: this app uses CSS color format", err),
+            Self::Time(desc) => write!(
+                f, "unable to parse time: {}\nHINT: type `{}` to achieve information on how to input a time data.", 
+                desc,
+                message::TimeFormat::get_cli_name()
+            )
         }
     }
 }

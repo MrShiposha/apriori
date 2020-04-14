@@ -99,34 +99,50 @@ pub enum TimeUnit {
     Week
 }
 
+macro_rules! register_time_units {
+    (
+        $($($unit_str:literal)|+ => $unit:ident),+
+    ) => {
+        static TIME_UNITS: phf::Map<&'static str, TimeUnit> = phf_map! {
+            $(
+                $(
+                    $unit_str => TimeUnit::$unit
+                ),+
+            ),+
+        };
+
+        fn time_units_variants_with_aliases() -> &'static [&'static [&'static str]] {
+            &[
+                $(
+                    &[
+                        $($unit_str),+
+                    ]
+                ),+
+            ]
+        }
+    };
+}
+
+register_time_units! {
+    "ms" | "milli" | "millis" | "millisecond" | "milliseconds" => Millisecond,
+    "s" | "sec" | "secs" | "second" | "seconds" => Second,
+    "min" | "mins" | "minute" | "minutes" => Minute,
+    "h" | "hour" | "hours" => Hour,
+    "d" | "day" | "days" => Day,
+    "w" | "week" | "weeks" => Week
+}
+
+impl TimeUnit {
+    pub fn variants_and_aliases() -> &'static [&'static [&'static str]] {
+        time_units_variants_with_aliases()
+    }
+}
+
 impl std::str::FromStr for TimeUnit {
     type Err = Error;
 
     fn from_str(time: &str) -> Result<Self> {
-        macro_rules! static_map {
-            (
-                $($($unit_str:literal)|+ => $unit:ident),+
-            ) => {
-                phf_map! {
-                    $(
-                        $(
-                            $unit_str => TimeUnit::$unit
-                        ),+
-                    ),+
-                }
-            };
-        }
-
-        static UNITS: phf::Map<&'static str, TimeUnit> = static_map! {
-            "ms" | "milli" | "millis" | "millisecond" | "milliseconds" => Millisecond,
-            "s" | "sec" | "secs" | "second" | "seconds" => Second,
-            "min" | "mins" | "minute" | "minutes" => Minute,
-            "h" | "hour" | "hours" => Hour,
-            "d" | "day" | "days" => Day,
-            "w" | "week" | "weeks" => Week
-        };
-
-        UNITS.get(time)
+        TIME_UNITS.get(time)
             .cloned()
             .ok_or(ParseError::Time(format!("`{}`: unexpected time unit", time)).into())
     }
