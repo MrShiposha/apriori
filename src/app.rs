@@ -26,11 +26,13 @@ use super::{
     Error,
     cli,
     storage::StorageManager,
+    graphics,
     r#type::{
         Color, 
         RawTime,
         TimeFormat, 
-        SessionId}
+        SessionId
+    }
 };
 
 const LOG_TARGET: &'static str = "application";
@@ -95,6 +97,7 @@ pub struct App {
     frame_count: usize,
     storage_mgr: StorageManager,
     session_id: SessionId,
+    unnamed_object_index: usize,
 }
 
 impl App {
@@ -130,7 +133,8 @@ impl App {
             frame_deltas_ms_sum: 0,
             frame_count: 0,
             storage_mgr,
-            session_id
+            session_id,
+            unnamed_object_index: 0
         }
     }
 
@@ -268,43 +272,46 @@ impl App {
     }
 
     fn add_obj(&mut self, msg: message::AddObject) -> Result<()> {
-        println!("new object: '{}'", msg.name);
-        println!("location: {}", msg.location);
-        
-        if let Some(t) = msg.t {
-            println!("t: {}", t);
-        }
+        let name = match msg.name {
+            Some(name) => name,
+            None => {
+                let old_index = self.unnamed_object_index;
+                self.unnamed_object_index += 1;
 
-        if let Some(color) = msg.color {
-            println!("color: {}", color);
-        }
+                format!("object-{}", old_index)
+            }
+        };
+
+        println!("new object: '{}'", name);
+        println!("location: {}", msg.location);
+        println!("first appearance: {}", TimeFormat::VirtualTimeShort(msg.t.unwrap_or(self.virtual_time)));
+        println!("color: {}", msg.color.unwrap_or(graphics::random_color()));
+        println!("radius: {}", msg.radius);
+        println!("mass: {}", msg.mass);
+        println!("lower time border: {:?}", msg.min_t);
+        println!("upper time border: {:?}", msg.max_t);
 
         Ok(())
     }
 
     fn handle_virtual_time_step(&mut self, state: State, msg: message::VirtualTimeStep) -> Result<()> {
         match msg.step {
-            Some(step) => if state.is_run() { 
-                self.virtual_time_step = if msg.reverse {
-                    -step
-                } else {
-                    step
-                };
-
-                Ok(())
+            Some(step) if state.is_run() => if msg.reverse {
+                self.virtual_time_step = -step;
             } else {
-                Err(Error::VirtualTime(
-                    "setting virtual time step after the simulation has complete is forbidden".into()
-                ))
+                self.virtual_time_step = step;
             },
             None => if msg.reverse {
                 println!("{}", TimeFormat::VirtualTimeShort(-self.virtual_time_step));
-                Ok(())
             } else {
                 println!("{}", TimeFormat::VirtualTimeShort(self.virtual_time_step));
-                Ok(())
-            }
+            },
+            _ => return Err(Error::VirtualTime(
+                "setting virtual time step after the simulation has complete is forbidden".into()
+            ))
         }
+
+        Ok(())
     }
 
     fn handle_virtual_time(&mut self, state: State, msg: message::VirtualTime) -> Result<()> {

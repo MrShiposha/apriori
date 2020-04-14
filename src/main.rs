@@ -4,6 +4,7 @@ mod app;
 mod cli;
 mod storage;
 mod message;
+mod graphics;
 mod r#type;
 mod error;
 mod logger;

@@ -39,7 +39,7 @@ messages! {
     #[cli(name = "vtstep", about = "get/set virtual time step")]
     message VirtualTimeStep {
         /// Virtual time step
-        #[structopt(short, long, parse(try_from_str = cli::parse_time))]
+        #[structopt(short, long, allow_hyphen_values = true, parse(try_from_str = cli::parse_time))]
         pub step: Option<chrono::Duration>,
 
         /// Reverse time step
@@ -50,11 +50,11 @@ messages! {
     #[cli(name = "vt", about = "get/set new virtual time")]
     message VirtualTime {
         /// Set virtual time to origin
-        #[structopt(long, conflicts_with_all = &["time", "reverse"])]
+        #[structopt(short, long, conflicts_with_all = &["time", "reverse"])]
         pub origin: bool,
 
         /// Virtual time
-        #[structopt(short, long, parse(try_from_str = cli::parse_time))]
+        #[structopt(short, long, allow_hyphen_values = true, parse(try_from_str = cli::parse_time))]
         pub time: Option<chrono::Duration>,
 
         /// Reverse time
@@ -120,7 +120,7 @@ messages! {
     message AddObject {
         /// Object's name
         #[structopt(short, long)]
-        pub name: ObjectName,
+        pub name: Option<ObjectName>,
         
         /// Object's location
         #[structopt(short, long, parse(try_from_str = cli::parse_vector))]
@@ -128,7 +128,7 @@ messages! {
 
         /// When the object have to appear.
         /// If this option have not specified, then the object will be added right now.
-        #[structopt(short, long, parse(try_from_str = cli::parse_time))]
+        #[structopt(short, long, allow_hyphen_values = true, parse(try_from_str = cli::parse_time))]
         pub t: Option<chrono::Duration>,
 
         /// Object's color
@@ -142,5 +142,15 @@ messages! {
         /// Object's mass
         #[structopt(short, long, default_value = "1")]
         pub mass: Mass,
+
+        /// The upper border of time, 
+        /// when an object allowed to be on the scene
+        #[structopt(long, allow_hyphen_values = true, parse(try_from_str = cli::parse_time))]
+        pub min_t: Option<chrono::Duration>,
+
+        /// The lower border of time, 
+        /// when an object allowed to be on the scene
+        #[structopt(long, allow_hyphen_values = true, parse(try_from_str = cli::parse_time))]
+        pub max_t: Option<chrono::Duration>,
     }
 }
