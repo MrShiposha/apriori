@@ -14,6 +14,12 @@ use super::{
 mod messages_macro;
 
 messages! {
+    #[cli(name = "help", about = "prints message list")]
+    message GlobalHelp {}
+
+    #[cli(name = "h", about = "prints message list")]
+    message GlobalHelpShort {}
+
     #[derive(Default)]
     #[cli(name = "shutdown", about = "shutdown the application")]
     message Shutdown {}

@@ -187,6 +187,23 @@ impl App {
         assert_ne!(state, State::Off);
 
         match message {
+            Message::GlobalHelp(_)
+            | Message::GlobalHelpShort(_) => {
+                let max_name = Message::cli_list().iter()
+                    .map(|(name, _)| name.len())
+                    .max()
+                    .unwrap();
+
+                for (name, about) in Message::cli_list() {
+                    print!("\t{:<width$}", name, width = max_name);
+                    match about {
+                        Some(about) => println!("  // {}", about),
+                        None => println!()
+                    }
+                }
+
+                Ok(())
+            },
             Message::Run(_) 
             | Message::Continue(_)
             | Message::RunShort(_) 
@@ -412,7 +429,7 @@ impl App {
 
     fn handle_key(&mut self, key: Key, action: Action, modifiers: Modifiers) -> Result<()> {
         match key {
-            Key::P if matches![action, Action::Press] => {
+            Key::Space | Key::P if matches![action, Action::Press] => {
                 let state = *shared_access![self.state];
                 match state {
                     State::Simulating => self.pause_simulation(),
