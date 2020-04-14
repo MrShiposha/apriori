@@ -1,66 +1,146 @@
 use std::fmt;
 use nalgebra::{Vector3, Point3};
+use phf::phf_map;
+use super::{
+    Result,
+    Error,
+    error::ParseError,
+};
 
 pub type ObjectName = String;
 pub type Coord = f32;
+pub type ColorChannel = f32;
 pub type Vector = Vector3<Coord>;
-pub type Color = Point3<Coord>;
+pub type Color = Point3<ColorChannel>;
+pub type Distance = f32;
+pub type Mass = f32;
 // pub type Point = Point3<Coord>;
+pub type RawTime = i64;
 
 pub type SessionId = i32;
 
+const DAYS_IN_WEEK: RawTime = 7;
+const HOURS_IN_DAY: RawTime = 24;
+const MINS_IN_HOUR: RawTime = 60;
+const SECS_IN_MIN: RawTime = 60;
+const MILLIS_IN_SEC: RawTime = 1000;
+
 pub enum TimeFormat {
-    VirtualTime(chrono::Duration),
-    VirtualTimeStep(chrono::Duration),
+    VirtualTimeLong(chrono::Duration),
+    VirtualTimeShort(chrono::Duration),
     FrameDelta(chrono::Duration)
 }
 
 impl fmt::Display for TimeFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TimeFormat::VirtualTime(time) => {
-                let days_in_week = 7;
-                let hours_in_day = 24;
-                let mins_in_hour = 60;
-                let secs_in_min = 60;
-                let millis_in_sec = 1000;
-
+            TimeFormat::VirtualTimeLong(time) => {
                 if time.num_weeks() != 0 {
                     write!(f, "week #{}, ", time.num_weeks())?;
                 }
 
-                if time.num_days() != 0 {
-                    write!(f, "day #{}, ", time.num_days() % days_in_week)?;
+                let days = time.num_days() % DAYS_IN_WEEK;
+
+                if days != 0 {
+                    write!(f, "day #{}, ", days)?;
                 }
 
                 write!(
                     f, "{}:{}:{}:{}",
-                    time.num_hours() % hours_in_day,
-                    time.num_minutes() % mins_in_hour,
-                    time.num_seconds() % secs_in_min,
-                    time.num_milliseconds() % millis_in_sec
+                    time.num_hours() % HOURS_IN_DAY,
+                    time.num_minutes() % MINS_IN_HOUR,
+                    time.num_seconds() % SECS_IN_MIN,
+                    time.num_milliseconds() % MILLIS_IN_SEC
                 )
             },
-            TimeFormat::VirtualTimeStep(time) => {
-                if time.num_weeks() != 0 {
-                    write!(f, "{}w", time.num_weeks())
-                } else if time.num_days() != 0 {
-                    write!(f, "{}d", time.num_days())
-                } else if time.num_hours() != 0 {
-                    write!(f, "{}h", time.num_hours())
-                } else if time.num_minutes() != 0 {
-                    write!(f, "{}min", time.num_minutes())
-                } else if time.num_seconds() != 0 {
-                    write!(f, "{}s", time.num_seconds())
-                } else if time.num_milliseconds() != 0 {
-                    write!(f, "{}ms", time.num_milliseconds())
-                } else {
-                    unreachable!()
+            TimeFormat::VirtualTimeShort(time) => {
+                if time.is_zero() {
+                    return write!(f, "0s")
                 }
+
+                let mut prefix = "";
+
+                macro_rules! write_component {
+                    ($unit:ident: $component:expr) => {{
+                        #![allow(unused_assignments)]
+
+                        let component = $component;
+            
+                        if component != 0 {
+                            write!(f, concat!["{}{}", stringify![$unit]], prefix, component)?;
+                            prefix = ":";
+                        }
+                    }};
+                }
+
+                write_component!(weeks: time.num_weeks());
+                write_component!(days: time.num_days() % DAYS_IN_WEEK);
+                write_component!(h: time.num_hours() % HOURS_IN_DAY);
+                write_component!(min: time.num_minutes() % MINS_IN_HOUR);
+                write_component!(s: time.num_seconds() % SECS_IN_MIN);
+                write_component!(ms: time.num_milliseconds() % MILLIS_IN_SEC);
+
+                Ok(())
             },
             TimeFormat::FrameDelta(time) => {
                 write!(f, "{}ms", time.num_milliseconds())
             }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TimeUnit {
+    Millisecond,
+    Second,
+    Minute,
+    Hour,
+    Day,
+    Week
+}
+
+impl std::str::FromStr for TimeUnit {
+    type Err = Error;
+
+    fn from_str(time: &str) -> Result<Self> {
+        macro_rules! static_map {
+            (
+                $($($unit_str:literal)|+ => $unit:ident),+
+            ) => {
+                phf_map! {
+                    $(
+                        $(
+                            $unit_str => TimeUnit::$unit
+                        ),+
+                    ),+
+                }
+            };
+        }
+
+        static UNITS: phf::Map<&'static str, TimeUnit> = static_map! {
+            "ms" | "milli" | "millis" | "millisecond" | "milliseconds" => Millisecond,
+            "s" | "sec" | "secs" | "second" | "seconds" => Second,
+            "min" | "mins" | "minute" | "minutes" => Minute,
+            "h" | "hour" | "hours" => Hour,
+            "d" | "day" | "days" => Day,
+            "w" | "week" | "weeks" => Week
+        };
+
+        UNITS.get(time)
+            .cloned()
+            .ok_or(ParseError::Time(format!("`{}`: unexpected time unit", time)).into())
+    }
+}
+
+impl fmt::Display for TimeUnit {
+    fn fmt(&self,  f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TimeUnit::Millisecond => write!(f, "ms"),
+            TimeUnit::Second => write!(f, "s"),
+            TimeUnit::Minute => write!(f, "min"),
+            TimeUnit::Hour => write!(f, "h"),
+            TimeUnit::Day => write!(f, "day"),
+            TimeUnit::Week => write!(f, "week"),
         }
     }
 }

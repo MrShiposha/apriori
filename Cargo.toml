@@ -14,6 +14,8 @@ css-color-parser = "0.1.2"
 rustyline = "6.0.0"
 log = "0.4.8"
 chrono = "0.4"
+rand = "0.7.3"
+phf = { version = "0.8", features = ["macros"] }
 postgres = { version = "0.17.2", features=["with-chrono-0_4"] }
 time = "*"
 clap = "*"

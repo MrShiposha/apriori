@@ -2,9 +2,10 @@ use super::{
     cli,
     r#type::{
         ObjectName,
-        Coord,
         Vector,
-        Color
+        Color,
+        Distance,
+        Mass
     }
 };
 
@@ -49,40 +50,12 @@ messages! {
     #[cli(name = "vt", about = "get/set new virtual time")]
     message VirtualTime {
         /// Set virtual time to origin
-        #[structopt(long, conflicts_with_all(&[
-            "week",
-            "day",
-            "hour",
-            "min",
-            "sec",
-            "milli",
-            "reserve"
-        ]))]
+        #[structopt(long, conflicts_with_all = &["time", "reverse"])]
         pub origin: bool,
 
-        /// Weeks number
-        #[structopt(short, long)]
-        pub week: Option<i64>,
-
-        /// Day number
-        #[structopt(short, long)]
-        pub day: Option<i64>,
-
-        /// Hour number
-        #[structopt(short, long)]
-        pub hour: Option<i64>,
-
-        /// Minute number
-        #[structopt(long)]
-        pub min: Option<i64>,
-
-        /// Second number
-        #[structopt(short, long)]
-        pub sec: Option<i64>,
-
-        /// Millisecond number
-        #[structopt(long)]
-        pub milli: Option<i64>,
+        /// Virtual time
+        #[structopt(short, long, parse(try_from_str = cli::parse_time))]
+        pub time: Option<chrono::Duration>,
 
         /// Reverse time
         #[structopt(short, long)]
@@ -154,12 +127,20 @@ messages! {
         pub location: Vector,
 
         /// When the object have to appear.
-        /// If this value is None, then the object will be added right now.
-        #[structopt(short, long)]
-        pub t: Option<Coord>,
+        /// If this option have not specified, then the object will be added right now.
+        #[structopt(short, long, parse(try_from_str = cli::parse_time))]
+        pub t: Option<chrono::Duration>,
 
         /// Object's color
         #[structopt(short, long, parse(try_from_str = cli::parse_color))]
-        pub color: Option<Color>
+        pub color: Option<Color>,
+
+        /// Object's readius
+        #[structopt(short, long, default_value = "1")]
+        pub radius: Distance,
+
+        /// Object's mass
+        #[structopt(short, long, default_value = "1")]
+        pub mass: Mass,
     }
 }

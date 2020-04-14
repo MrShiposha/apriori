@@ -8,13 +8,11 @@ pub enum Error {
     MissingMessage,
     UnknownMessage(String),
     UnexpectedMessage(super::message::Message),
-    MessageParse(clap::Error),
-    MessgaeHelp(clap::Error),
+    MessageHelp(clap::Error),
     MessageVersion(clap::Error),
-    CliParse(super::cli::ParseError),
+    Parse(ParseError),
     CliRead(rustyline::error::ReadlineError),
     VirtualTime(Description),
-    VirtualTimeStep(Description),
     Storage(postgres::Error),
     SetupSchema(postgres::Error),
     SessionCreate(postgres::Error),
@@ -28,19 +26,27 @@ pub enum Error {
     SessionDelete(postgres::Error),
 }
 
+#[derive(Debug)]
+pub enum ParseError {
+    Message(clap::Error),
+    Vector(Description),
+    Color(css_color_parser::ColorParseError),
+    Time(Description),
+}
+
 impl From<clap::Error> for Error {
     fn from(err: clap::Error) -> Self {
         match &err.kind {
-            clap::ErrorKind::HelpDisplayed => Self::MessgaeHelp(err),
+            clap::ErrorKind::HelpDisplayed => Self::MessageHelp(err),
             clap::ErrorKind::VersionDisplayed => Self::MessageVersion(err),
-            _ => Self::MessageParse(err)
+            _ => Self::Parse(err.into())
         }
     }
 }
 
-impl From<super::cli::ParseError> for Error {
-    fn from(err: super::cli::ParseError) -> Self {
-        Self::CliParse(err)
+impl From<ParseError> for Error {
+    fn from(err: ParseError) -> Self {
+        Self::Parse(err)
     }
 }
 
@@ -79,13 +85,11 @@ impl fmt::Display for Error {
             Error::MissingMessage => write!(f, "[missing message]"),
             Error::UnknownMessage(msg) => write!(f, "[unknown message] {}", msg),
             Error::UnexpectedMessage(msg) => write!(f, "[unexpected message] {}", msg.get_cli_name()),
-            Error::MessageParse(err) => write!(f, "[message parse] {}", err),
-            Error::MessgaeHelp(help) => write!(f, "[message help] {}", help),
+            Error::MessageHelp(help) => write!(f, "[message help] {}", help),
             Error::MessageVersion(version) => write!(f, "[message version] {}", version),
-            Error::CliParse(err) => write!(f, "[cli parse] {}", err),
+            Error::Parse(err) => write!(f, "[parse] {}", err),
             Error::CliRead(err) => write!(f, "[cli] {}", err),
-            Error::VirtualTime(desc) => write!(f, "[message] unable to set virtual time: {}", desc),
-            Error::VirtualTimeStep(desc) => write!(f, "[message] unable to set virtual time step: {}", desc),
+            Error::VirtualTime(desc) => write!(f, "[virtual time] {}", desc),
             Error::Storage(err) => write!(f, "[storage] {}", err),
             Error::SetupSchema(err) => write!(f, "[storage] unable to setup schema: {}", err),
             Error::SessionCreate(err) => write!(f, "[stirage] unable to create new session: {}", err),
@@ -97,6 +101,29 @@ impl fmt::Display for Error {
             Error::SessionList(err) => write!(f, "[storage] unable to display session list: {}", err),
             Error::SessionGet(err) => write!(f, "[storage] unable to display current session: {}", err),
             Error::SessionDelete(err) => write!(f, "[storage] unable to delete the session: {}", err),
+        }
+    }
+}
+
+impl From<clap::Error> for ParseError {
+    fn from(err: clap::Error) -> Self {
+        Self::Message(err)
+    }
+}
+
+impl From<css_color_parser::ColorParseError> for ParseError {
+    fn from(err: css_color_parser::ColorParseError) -> Self {
+        Self::Color(err)
+    }
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Message(err) => write!(f, "unable to parse message: {}", err),
+            Self::Vector(desc) => write!(f, "unable to parse vector: {}", desc),
+            Self::Color(err) => write!(f, "unable to parse color: {}", err),
+            Self::Time(desc) => write!(f, "unable to parse time unit: {}", desc)
         }
     }
 }

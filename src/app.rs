@@ -26,7 +26,11 @@ use super::{
     Error,
     cli,
     storage::StorageManager,
-    r#type::{Color, TimeFormat, SessionId}
+    r#type::{
+        Color, 
+        RawTime,
+        TimeFormat, 
+        SessionId}
 };
 
 const LOG_TARGET: &'static str = "application";
@@ -168,7 +172,7 @@ impl App {
 
             let loop_end = time::precise_time_ns();
             let loop_time = loop_end - loop_begin;
-            self.real_time = self.real_time + chrono::Duration::nanoseconds(loop_time as i64);
+            self.real_time = self.real_time + chrono::Duration::nanoseconds(loop_time as RawTime);
         }
 
         cli.join();
@@ -289,58 +293,40 @@ impl App {
 
                 Ok(())
             } else {
-                Err(Error::VirtualTimeStep(
+                Err(Error::VirtualTime(
                     "setting virtual time step after the simulation has complete is forbidden".into()
                 ))
             },
             None => if msg.reverse {
-                println!("{}", TimeFormat::VirtualTimeStep(-self.virtual_time_step));
+                println!("{}", TimeFormat::VirtualTimeShort(-self.virtual_time_step));
                 Ok(())
             } else {
-                println!("{}", TimeFormat::VirtualTimeStep(self.virtual_time_step));
+                println!("{}", TimeFormat::VirtualTimeShort(self.virtual_time_step));
                 Ok(())
             }
         }
     }
 
     fn handle_virtual_time(&mut self, state: State, msg: message::VirtualTime) -> Result<()> {
-        let time = if msg.week.is_none()
-                    && msg.day.is_none()
-                    && msg.hour.is_none()
-                    && msg.min.is_none()
-                    && msg.sec.is_none()
-                    && msg.milli.is_none() {
-            if msg.origin {
-                chrono::Duration::zero()
-            } else if msg.reverse {
-                println!("{}", TimeFormat::VirtualTime(-self.virtual_time));
-                return Ok(());
+        match msg.time {
+            Some(time) if state.is_run() => if msg.reverse {
+                self.virtual_time = -time;
             } else {
-                println!("{}", TimeFormat::VirtualTime(self.virtual_time));
-                return Ok(());
+                self.virtual_time = time;
+            },
+            None if state.is_run() && msg.origin => self.virtual_time = chrono::Duration::zero(),
+            None if !msg.origin => if msg.reverse {
+                println!("{}", TimeFormat::VirtualTimeShort(-self.virtual_time));
+            } else {
+                println!("{}", TimeFormat::VirtualTimeShort(self.virtual_time));
             }
-        } else {
-            chrono::Duration::weeks(msg.week.unwrap_or(0))
-                + chrono::Duration::days(msg.day.unwrap_or(0))
-                + chrono::Duration::hours(msg.hour.unwrap_or(0))
-                + chrono::Duration::minutes(msg.min.unwrap_or(0))
-                + chrono::Duration::seconds(msg.sec.unwrap_or(0))
-                + chrono::Duration::milliseconds(msg.milli.unwrap_or(0))
-        };
-
-        if state.is_run() {
-            self.virtual_time = if msg.reverse {
-                -time
-            } else {
-                time
-            };
-
-            Ok(())
-        } else {
-            Err(Error::VirtualTime(
+            _ => return Err(Error::VirtualTime(
                 "setting virtual time after the simulation has complete is forbidden".into()
-            ))
+            )),
+            
         }
+
+        Ok(())
     }
 
     fn handle_new_session(&mut self, msg: message::NewSession) -> Result<()> {
@@ -376,7 +362,9 @@ impl App {
     fn simulate_frame(&mut self) {
         let vtime_step = self.virtual_time_step.num_milliseconds() as f32;
         let frame_step = vtime_step * self.frame_delta_time.num_milliseconds() as f32 / 1000.0;
-        self.virtual_time = self.virtual_time + chrono::Duration::microseconds((frame_step * 1000.0) as i64);
+        self.virtual_time = self.virtual_time + chrono::Duration::microseconds(
+            (frame_step * 1000.0) as RawTime
+        );
 
         // TODO
         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -483,13 +471,13 @@ impl App {
         writeln!(
             &mut stats_text, 
             "virtual time: {}", 
-            TimeFormat::VirtualTime(self.virtual_time)
+            TimeFormat::VirtualTimeLong(self.virtual_time)
         ).unwrap();
 
         writeln!(
             &mut stats_text, 
             "virtual time step: {}",
-            TimeFormat::VirtualTimeStep(self.virtual_time_step)
+            TimeFormat::VirtualTimeShort(self.virtual_time_step)
         ).unwrap();
 
         writeln!(
