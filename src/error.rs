@@ -3,6 +3,23 @@ use super::message;
 
 pub type Description = String;
 
+#[macro_export]
+macro_rules! make_error {
+    ($($path:ident)::+($value:expr)) => {
+        make_error![@_impl $($path)::+($value)]
+    };
+
+    (@_impl $err_enum:ident::$case:ident($value:expr)) => {
+        $crate::error::$err_enum::$case($value)
+    };
+
+    (@_impl $err_enum:ident::$sub_err_enum:ident::$($err_tail:ident)::+($value:expr)) => {
+        $crate::error::$err_enum::$sub_err_enum(
+            make_error![@_impl $sub_err_enum::$($err_tail)::+($value)]
+        )
+    };
+}
+
 #[derive(Debug)]
 pub enum Error {
     Sync(Description),
@@ -11,10 +28,23 @@ pub enum Error {
     UnexpectedMessage(super::message::Message),
     MessageHelp(clap::Error),
     MessageVersion(clap::Error),
-    Parse(ParseError),
+    Parse(Parse),
     CliRead(rustyline::error::ReadlineError),
     VirtualTime(Description),
-    Storage(postgres::Error),
+    Storage(Storage),
+}
+
+#[derive(Debug)]
+pub enum Parse {
+    Message(clap::Error),
+    Vector(Description),
+    Color(css_color_parser::ColorParseError),
+    Time(Description),
+}
+
+#[derive(Debug)]
+pub enum Storage {
+    Raw(postgres::Error),
     SetupSchema(postgres::Error),
     SessionCreate(postgres::Error),
     SessionUpdateAccessTime(postgres::Error),
@@ -25,14 +55,7 @@ pub enum Error {
     SessionList(postgres::Error),
     SessionGet(postgres::Error),
     SessionDelete(postgres::Error),
-}
 
-#[derive(Debug)]
-pub enum ParseError {
-    Message(clap::Error),
-    Vector(Description),
-    Color(css_color_parser::ColorParseError),
-    Time(Description),
 }
 
 impl From<clap::Error> for Error {
@@ -45,8 +68,8 @@ impl From<clap::Error> for Error {
     }
 }
 
-impl From<ParseError> for Error {
-    fn from(err: ParseError) -> Self {
+impl From<Parse> for Error {
+    fn from(err: Parse) -> Self {
         Self::Parse(err)
     }
 }
@@ -54,12 +77,6 @@ impl From<ParseError> for Error {
 impl From<rustyline::error::ReadlineError> for Error {
     fn from(err: rustyline::error::ReadlineError) -> Self {
         Self::CliRead(err)
-    }
-}
-
-impl From<postgres::Error> for Error {
-    fn from(err: postgres::Error) -> Self {
-        Self::Storage(err)
     }
 }
 
@@ -92,33 +109,29 @@ impl fmt::Display for Error {
             Error::CliRead(err) => write!(f, "[cli] {}", err),
             Error::VirtualTime(desc) => write!(f, "[virtual time] {}", desc),
             Error::Storage(err) => write!(f, "[storage] {}", err),
-            Error::SetupSchema(err) => write!(f, "[storage] unable to setup schema: {}", err),
-            Error::SessionCreate(err) => write!(f, "[stirage] unable to create new session: {}", err),
-            Error::SessionUpdateAccessTime(err) => write!(f, "[storage] unable to update session access time: {}", err),
-            Error::SessionSave(desc) => write!(f, "[storage] unable to save the session: {}", desc),
-            Error::SessionLoad(desc) => write!(f, "[storage] unable to load the session: {}", desc),
-            Error::SessionRename(err) => write!(f, "[storage] unable to find the session: {}", err),
-            Error::SessionUnlock(err) => write!(f, "[storage] unable to unlock the session: {}", err),
-            Error::SessionList(err) => write!(f, "[storage] unable to display session list: {}", err),
-            Error::SessionGet(err) => write!(f, "[storage] unable to display current session: {}", err),
-            Error::SessionDelete(err) => write!(f, "[storage] unable to delete the session: {}", err),
         }
     }
 }
 
-impl From<clap::Error> for ParseError {
+impl From<clap::Error> for Parse {
     fn from(err: clap::Error) -> Self {
         Self::Message(err)
     }
 }
 
-impl From<css_color_parser::ColorParseError> for ParseError {
+impl From<css_color_parser::ColorParseError> for Parse {
     fn from(err: css_color_parser::ColorParseError) -> Self {
         Self::Color(err)
     }
 }
 
-impl fmt::Display for ParseError {
+impl From<css_color_parser::ColorParseError> for Error {
+    fn from(err: css_color_parser::ColorParseError) -> Self {
+        Self::Parse(err.into())
+    }
+}
+
+impl fmt::Display for Parse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Message(err) => write!(f, "{}", err),
@@ -129,6 +142,36 @@ impl fmt::Display for ParseError {
                 desc,
                 message::TimeFormat::get_cli_name()
             )
+        }
+    }
+}
+
+impl From<postgres::Error> for Storage {
+    fn from(err: postgres::Error) -> Self {
+        Self::Raw(err)
+    }
+}
+
+impl From<postgres::Error> for Error {
+    fn from(err: postgres::Error) -> Self {
+        Self::Storage(err.into())
+    }
+}
+
+impl fmt::Display for Storage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Raw(err) => write!(f, "{}", err),
+            Self::SetupSchema(err) => write!(f, "unable to setup schema: {}", err),
+            Self::SessionCreate(err) => write!(f, "unable to create new session: {}", err),
+            Self::SessionUpdateAccessTime(err) => write!(f, "unable to update session access time: {}", err),
+            Self::SessionSave(desc) => write!(f, "unable to save the session: {}", desc),
+            Self::SessionLoad(desc) => write!(f, "unable to load the session: {}", desc),
+            Self::SessionRename(err) => write!(f, "unable to find the session: {}", err),
+            Self::SessionUnlock(err) => write!(f, "unable to unlock the session: {}", err),
+            Self::SessionList(err) => write!(f, "unable to display session list: {}", err),
+            Self::SessionGet(err) => write!(f, "unable to display current session: {}", err),
+            Self::SessionDelete(err) => write!(f, "unable to delete the session: {}", err),
         }
     }
 }

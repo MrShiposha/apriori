@@ -4,7 +4,7 @@ use phf::phf_map;
 use super::{
     Result,
     Error,
-    error::ParseError,
+    make_error,
 };
 
 pub type ObjectName = String;
@@ -144,7 +144,7 @@ impl std::str::FromStr for TimeUnit {
     fn from_str(time: &str) -> Result<Self> {
         TIME_UNITS.get(time)
             .cloned()
-            .ok_or(ParseError::Time(format!("`{}`: unexpected time unit", time)).into())
+            .ok_or(make_error![Error::Parse::Time(format!("`{}`: unexpected time unit", time))])
     }
 }
 

@@ -17,7 +17,7 @@ use css_color_parser::Color as CssColor;
 use super::{
     Result,
     Error,
-    error::ParseError,
+    make_error,
     Shared,
     shared_access,
     app::{self, APP_CLI_PROMPT},
@@ -93,10 +93,11 @@ impl Highlighter for Helper {}
 pub fn parse_vector(src: &str) -> Result<Vector> {
     let components = src.split(",").collect::<Vec<_>>();
     if components.len() != 3 {
-        return Err(ParseError::Vector("expected 3-dimensional vector".into()).into());
+        return Err(make_error![Error::Parse::Vector("expected 3-dimensional vector".into())]);
     }
 
-    let map_float_parse_err = |err: std::num::ParseFloatError| ParseError::Vector(err.to_string());
+    let map_float_parse_err = |err: std::num::ParseFloatError| 
+        make_error![Error::Parse::Vector(err.to_string())];
 
     let components = [
         components[0].parse::<Coord>().map_err(map_float_parse_err)?,
@@ -108,7 +109,8 @@ pub fn parse_vector(src: &str) -> Result<Vector> {
 }
 
 pub fn parse_color(src: &str) -> Result<Color> {
-    let css_color = src.parse::<CssColor>().map_err(|err| ParseError::Color(err))?;
+    let css_color = src.parse::<CssColor>()
+        .map_err(|err| make_error![Error::Parse::Color(err)])?;
 
     let color = Color::new(
         css_color.r as ColorChannel / 255.0, 
@@ -122,9 +124,7 @@ pub fn parse_color(src: &str) -> Result<Color> {
 pub fn parse_time(src: &str) -> Result<chrono::Duration> {
     macro_rules! parse_error {
         ($fmt:literal $($tt:tt)*) => {
-            Error::Parse(
-                ParseError::Time(format!($fmt $($tt)*))
-            )   
+            make_error![Error::Parse::Time(format!($fmt $($tt)*))]
         };
     }
 
