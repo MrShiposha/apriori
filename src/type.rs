@@ -12,10 +12,11 @@ pub type Coord = f32;
 pub type ColorChannel = f32;
 pub type Vector = Vector3<Coord>;
 pub type Color = Point3<ColorChannel>;
+pub type PackedColor = i32;
 pub type Distance = f32;
 pub type Mass = f32;
-// pub type Point = Point3<Coord>;
 pub type RawTime = i64;
+pub type GravityCoeff = f32;
 
 pub type SessionId = i32;
 

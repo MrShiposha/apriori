@@ -8,53 +8,12 @@ AS $$
 	END 
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE PROCEDURE {schema_name}.delete_session_dependencies(id integer)
-AS $$
-	DECLARE
-		object_id_to_rm bigint;
-    BEGIN
-        --- TODO
-		-- DELETE FROM {schema_name}.object
-		-- WHERE session_fk_id=id 
-		-- RETURNING object_id INTO object_id_to_rm;
-
-		-- DELETE FROM {schema_name}.location
-		-- WHERE object_fk_id=object_id_to_rm;
-
-		-- DELETE FROM {schema_name}.collision
-		-- WHERE fk_first_object_id=object_id_to_rm;
-
-		-- DELETE FROM {schema_name}.applied_force
-		-- WHERE fk_object_id=object_id_to_rm;
-
-		-- DELETE FROM {schema_name}.object
-		-- WHERE object_id=object_id_to_rm;
-		--- END TODO
-    END
-$$ LANGUAGE plpgsql;
-
-CREATE OR REPLACE PROCEDURE {schema_name}.delete_session(id integer)
-AS $$
-    BEGIN
-        CALL {schema_name}.delete_session_dependencies(id);
-        DELETE FROM {schema_name}.session WHERE session_id=id;
-    END
-$$ LANGUAGE plpgsql;
-
 CREATE OR REPLACE FUNCTION {schema_name}.remove_unnamed_sessions()
 RETURNS trigger
 AS $$
-    DECLARE
-        session_id_to_rm integer;
 	BEGIN
-        SELECT session_id INTO session_id_to_rm
-        FROM {schema_name}.session
-        WHERE is_locked=false AND session_name IS NULL;
-
-        IF (session_id_to_rm IS NOT NULL) THEN
-		    CALL {schema_name}.delete_session(session_id_to_rm);
-        END IF;
-
+		DELETE FROM {schema_name}.session
+		WHERE is_locked=false AND session_name IS NULL;
 		RETURN NEW;
 	END
 $$ LANGUAGE plpgsql;
@@ -77,8 +36,6 @@ AS $$
             IF(OLD.session_name IS NOT NULL) THEN
                 CALL {schema_name}.unlock_hanged_sessions();
             END IF;
-
-            CALL {schema_name}.delete_session_dependencies(OLD.session_id);
         ELSE
             RAISE EXCEPTION 'Attempting to delete busy session'
             USING HINT = 'Is the session locked?';

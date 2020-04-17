@@ -61,17 +61,12 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE PROCEDURE {schema_name}.rename_session(old_name varchar(50), new_name varchar(50))
 AS $$
     BEGIN
-        IF (
-            NOT EXISTS(
-                SELECT * FROM {schema_name}.session
-                WHERE session_name = new_name
-            )
-        ) THEN
-            UPDATE {schema_name}.session
-            SET session_name = new_name
-            WHERE session_name = old_name;
-        ELSE
-            RAISE 'session `%` already exists', new_name;
+        UPDATE {schema_name}.session
+        SET session_name = new_name
+        WHERE session_name = old_name;
+
+        IF (NOT FOUND) THEN
+            RAISE 'session `%` not found', old_name;
         END IF;
     END
 $$ LANGUAGE plpgsql;
@@ -81,27 +76,17 @@ RETURNS integer
 AS $$
     DECLARE
         load_session_id integer;
-        load_session_name varchar(50);
-        load_session_last_access timestamptz;
-        is_load_session_locked boolean;
     BEGIN
-        SELECT session_id, session_name, last_access, is_locked
-        INTO load_session_id, load_session_name, load_session_last_access, is_load_session_locked
-        FROM {schema_name}.session
-        WHERE session_name = name;
+        UPDATE {schema_name}.session
+        SET last_access = now(), is_locked = true
+        WHERE session_name = name AND is_locked = false
+        RETURNING session_id INTO load_session_id;
 
-        IF (load_session_id IS NULL) THEN
-            RAISE 'session `%` is not found', name;
-        ELSIF (is_load_session_locked AND NOT is_session_hanged(load_session_last_access)) 
-        THEN
-            RAISE 'unable to load locked session';
-        ELSE
-            UPDATE {schema_name}.session
-            SET last_access = now(), is_locked = true
-            WHERE session_id = load_session_id;
-
-            RETURN load_session_id;
+        IF (NOT FOUND) THEN
+            RAISE 'session `%` is either locked or not exist', name;
         END IF;
+
+        RETURN load_session_id;
     END
 $$ LANGUAGE plpgsql;
 
@@ -119,24 +104,12 @@ $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE PROCEDURE {schema_name}.delete_session(name varchar(50))
 AS $$
-    DECLARE
-        del_session_id integer;
-        del_session_last_access timestamptz;
-        is_del_session_locked boolean;
     BEGIN
-        SELECT session_id, last_access, is_locked
-        INTO del_session_id, del_session_last_access, is_del_session_locked
-        FROM {schema_name}.session
-        WHERE session_name = name;
+        DELETE FROM {schema_name}.session
+        WHERE session_name = name AND is_locked = false;
 
-        IF (del_session_id IS NULL) THEN
-            RAISE 'session `%` is not found', name;
-        ELSIF (is_del_session_locked AND NOT is_session_hanged(del_session_last_access)) 
-        THEN
-            RAISE 'unable to delete locked session';
-        ELSE
-            DELETE FROM {schema_name}.session
-            WHERE session_id = del_session_id;
+        IF (NOT FOUND) THEN
+            RAISE 'session `%` is either locked or not exist', name;
         END IF;
     END
 $$ LANGUAGE plpgsql;

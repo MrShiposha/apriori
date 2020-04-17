@@ -5,6 +5,7 @@ mod cli;
 mod storage;
 mod message;
 mod graphics;
+mod scene;
 mod r#type;
 mod error;
 mod logger;

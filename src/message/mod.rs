@@ -5,7 +5,8 @@ use super::{
         Vector,
         Color,
         Distance,
-        Mass
+        Mass,
+        GravityCoeff
     }
 };
 
@@ -152,6 +153,14 @@ messages! {
         #[structopt(short, long, default_value = "1")]
         pub mass: Mass,
 
+        /// Gravity coefficient
+        #[structopt(short, long, default_value = "1")]
+        pub gravity: GravityCoeff,
+
+        /// Compute step
+        #[structopt(short, long, default_value = "1s", parse(try_from_str = cli::parse_time))]
+        pub step: chrono::Duration,
+
         /// The lower border of time, 
         /// when an object allowed to be on the scene.
         #[structopt(long, allow_hyphen_values = true, parse(try_from_str = cli::parse_time))]
@@ -162,4 +171,18 @@ messages! {
         #[structopt(long, allow_hyphen_values = true, parse(try_from_str = cli::parse_time))]
         pub max_t: Option<chrono::Duration>,
     }
+
+    #[cli(name = "rename-obj", about = "rename object on the scene")]
+    message RenameObject {
+        /// Old object's name.
+        #[structopt(short, long)]
+        pub old_name: String,
+
+        /// New object's name.
+        #[structopt(short, long)]
+        pub new_name: String
+    }
+
+    #[cli(name = "list-objects", about = "list all objects in the current session")]
+    message ListObjects {}
 }

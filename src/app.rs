@@ -277,7 +277,12 @@ impl App {
             Message::DeleteSession(msg) => {
                 self.storage_mgr.session().delete(&msg.name)
             },
-            Message::AddObject(msg) if state.is_run()  => self.add_obj(msg),
+            Message::AddObject(msg) if state.is_run() => self.handle_add_object(msg),
+            Message::RenameObject(msg) if state.is_run() => self.handle_rename_object(msg),
+            Message::ListObjects(_) => {
+                println!("\n\t-- object list --");
+                self.storage_mgr.object().print_list(&self.session_id)
+            },
             unexpected => return Err(Error::UnexpectedMessage(unexpected))
         }
     }
@@ -318,15 +323,19 @@ impl App {
         Ok(())
     }
 
-    fn add_obj(&mut self, msg: message::AddObject) -> Result<()> {
+    fn handle_add_object(&mut self, msg: message::AddObject) -> Result<()> {
+        let object_index = self.unnamed_object_index;
+        self.unnamed_object_index += 1;
+
+        self.storage_mgr.object().add(
+            self.session_id,
+            &msg,
+            format!("object-{}", object_index)
+        )?;
+
         let name = match msg.name {
             Some(name) => name,
-            None => {
-                let old_index = self.unnamed_object_index;
-                self.unnamed_object_index += 1;
-
-                format!("object-{}", old_index)
-            }
+            None => format!("object-{}", object_index)
         };
 
         println!("new object: '{}'", name);
@@ -339,6 +348,14 @@ impl App {
         println!("upper time border: {:?}", msg.max_t);
 
         Ok(())
+    }
+
+    fn handle_rename_object(&mut self, msg: message::RenameObject) -> Result<()> {
+        self.storage_mgr.object().rename(
+            self.session_id,
+            &msg.old_name,
+            &msg.new_name
+        )
     }
 
     fn handle_virtual_time_step(&mut self, state: State, msg: message::VirtualTimeStep) -> Result<()> {
