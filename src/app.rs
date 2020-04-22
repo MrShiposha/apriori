@@ -64,6 +64,10 @@ impl State {
         !self.is_completed() && !self.is_off()
     }
 
+    pub fn is_paused(&self) -> bool {
+        matches![self, State::Paused]
+    }
+
     pub fn is_completed(&self) -> bool {
         matches![self, State::Completed]
     }
@@ -484,6 +488,14 @@ impl App {
                     _ => Ok(())
                 }
             },
+            Key::Left if matches![action, Action::Press] && shared_access![self.state].is_paused() => {
+                self.virtual_time = self.virtual_time - self.virtual_time_step;
+                Ok(())
+            },
+            Key::Right if matches![action, Action::Press] && shared_access![self.state].is_paused() => {
+                self.virtual_time = self.virtual_time + self.virtual_time_step;
+                Ok(())
+            }
             Key::C if modifiers.contains(Modifiers::Control) && matches![action, Action::Press] => {
                 self.close();
                 Ok(())
