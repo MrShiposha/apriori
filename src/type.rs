@@ -1,13 +1,8 @@
-use std::fmt;
-use nalgebra::{Vector3, Point3};
+use super::{make_error, Error, Result};
+use nalgebra::{Point3, Vector3};
 use phf::phf_map;
-use super::{
-    Result,
-    Error,
-    make_error,
-};
+use std::fmt;
 
-pub type ObjectName = String;
 pub type Coord = f32;
 pub type ColorChannel = f32;
 pub type Vector = Vector3<Coord>;
@@ -18,7 +13,12 @@ pub type Mass = f32;
 pub type RawTime = i64;
 pub type GravityCoeff = f32;
 
+pub type SessionName = String;
 pub type SessionId = i32;
+pub type ObjectName = String;
+pub type ObjectId = i32;
+pub type AttractorName = String;
+pub type AttractorId = i32;
 
 const DAYS_IN_WEEK: RawTime = 7;
 const HOURS_IN_DAY: RawTime = 24;
@@ -29,7 +29,7 @@ const MILLIS_IN_SEC: RawTime = 1000;
 pub enum TimeFormat {
     VirtualTimeLong(chrono::Duration),
     VirtualTimeShort(chrono::Duration),
-    FrameDelta(chrono::Duration)
+    FrameDelta(chrono::Duration),
 }
 
 impl fmt::Display for TimeFormat {
@@ -47,16 +47,17 @@ impl fmt::Display for TimeFormat {
                 }
 
                 write!(
-                    f, "{}:{}:{}:{}",
+                    f,
+                    "{}:{}:{}:{}",
                     time.num_hours() % HOURS_IN_DAY,
                     time.num_minutes() % MINS_IN_HOUR,
                     time.num_seconds() % SECS_IN_MIN,
                     time.num_milliseconds() % MILLIS_IN_SEC
                 )
-            },
+            }
             TimeFormat::VirtualTimeShort(time) => {
                 if time.is_zero() {
-                    return write!(f, "0s")
+                    return write!(f, "0s");
                 }
 
                 let mut prefix = "";
@@ -66,7 +67,7 @@ impl fmt::Display for TimeFormat {
                         #![allow(unused_assignments)]
 
                         let component = $component;
-            
+
                         if component != 0 {
                             write!(f, concat!["{}{}", stringify![$unit]], prefix, component)?;
                             prefix = ":";
@@ -82,10 +83,8 @@ impl fmt::Display for TimeFormat {
                 write_component!(ms: time.num_milliseconds() % MILLIS_IN_SEC);
 
                 Ok(())
-            },
-            TimeFormat::FrameDelta(time) => {
-                write!(f, "{}ms", time.num_milliseconds())
             }
+            TimeFormat::FrameDelta(time) => write!(f, "{}ms", time.num_milliseconds()),
         }
     }
 }
@@ -97,7 +96,7 @@ pub enum TimeUnit {
     Minute,
     Hour,
     Day,
-    Week
+    Week,
 }
 
 macro_rules! register_time_units {
@@ -143,14 +142,18 @@ impl std::str::FromStr for TimeUnit {
     type Err = Error;
 
     fn from_str(time: &str) -> Result<Self> {
-        TIME_UNITS.get(time)
+        TIME_UNITS
+            .get(time)
             .cloned()
-            .ok_or(make_error![Error::Parse::Time(format!("`{}`: unexpected time unit", time))])
+            .ok_or(make_error![Error::Parse::Time(format!(
+                "`{}`: unexpected time unit",
+                time
+            ))])
     }
 }
 
 impl fmt::Display for TimeUnit {
-    fn fmt(&self,  f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TimeUnit::Millisecond => write!(f, "ms"),
             TimeUnit::Second => write!(f, "s"),

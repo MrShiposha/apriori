@@ -1,13 +1,12 @@
-use super::{
-    Result,
-    make_error,
-    app
-};
+use super::{app, make_error, Result};
 
 pub mod session;
 pub mod object;
-use session::Session;
-use object::Object;
+pub mod attractor;
+
+pub use object::Object;
+pub use attractor::Attractor;
+pub use session::Session;
 
 #[macro_export]
 macro_rules! storage_map_err {
@@ -32,6 +31,7 @@ pub struct StorageManager {
     pub(in crate::storage) add_object: postgres::Statement,
     pub(in crate::storage) rename_object: postgres::Statement,
     pub(in crate::storage) object_list: postgres::Statement,
+    pub(in crate::storage) add_attractor: postgres::Statement,
 }
 
 impl StorageManager {
@@ -42,7 +42,7 @@ impl StorageManager {
             ($query:expr $(, $($additional:tt)*)?) => {
                 psql.prepare(
                     format!(
-                        $query, 
+                        $query,
                         schema_name = $crate::app::APP_NAME
                         $(, $($additional)*)?
                     ).as_str()
@@ -54,9 +54,8 @@ impl StorageManager {
 
         let create_new_session = query!["SELECT {schema_name}.create_new_session($1)"]?;
 
-        let update_session_access_time = query![
-            "CALL {schema_name}.update_session_access_time($1)"
-        ]?;
+        let update_session_access_time =
+            query!["CALL {schema_name}.update_session_access_time($1)"]?;
 
         let unlock_session = query!["CALL {schema_name}.unlock_session($1)"]?;
 
@@ -78,20 +77,29 @@ impl StorageManager {
         let delete_session = query!["CALL {schema_name}.delete_session($1)"]?;
 
         let add_object = query! {"
-            CALL {schema_name}.add_object(
+            SELECT {schema_name}.add_object(
                 $1,
                 $2,
                 $3,
                 $4,
                 $5,
-                $6,
-                $7,
-                $8,
-                $9
+                $6
             )
         "}?;
 
         let rename_object = query!["CALL {schema_name}.rename_object($1, $2, $3)"]?;
+
+        let add_attractor = query!["
+            SELECT {schema_name}.add_attractor(
+                $1, 
+                $2, 
+                $3, 
+                $4,
+                $5,
+                $6,
+                $7
+            )
+        "]?;
 
         let object_list = query! {"
             SELECT object_name
@@ -115,7 +123,8 @@ impl StorageManager {
 
             add_object,
             rename_object,
-            object_list
+            object_list,
+            add_attractor,
         };
 
         Ok(mgr)
@@ -125,7 +134,7 @@ impl StorageManager {
         macro_rules! query {
             ($query:expr $(, $($additional:tt)*)?) => {
                 format!(
-                    $query, 
+                    $query,
                     schema_name = $crate::app::APP_NAME
                     $(, $($additional)*)?
                 ).as_str()
@@ -138,6 +147,7 @@ impl StorageManager {
                 {session} 
                 {object}
                 {location}
+                {attractor}
                 {session_triggers}
             "#,
             schema = query![include_str!("sql/setup/schema.sql")],
@@ -147,6 +157,7 @@ impl StorageManager {
             },
             object = query![include_str!["sql/setup/object.sql"]],
             location = query![include_str!["sql/setup/location.sql"]],
+            attractor = query![include_str!["sql/setup/attractor.sql"]],
             session_triggers = query![include_str!("sql/setup/session_triggers.sql")]
         };
 
@@ -160,5 +171,9 @@ impl StorageManager {
 
     pub fn object(&mut self) -> Object {
         Object::new_api(self)
+    }
+
+    pub fn attractor(&mut self) -> Attractor {
+        Attractor::new_api(self)
     }
 }

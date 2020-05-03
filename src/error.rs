@@ -1,21 +1,24 @@
+use super::{
+    message,
+    r#type::{ObjectName, AttractorName, TimeFormat},
+};
 use std::fmt;
-use super::message;
 
 pub type Description = String;
 
 #[macro_export]
 macro_rules! make_error {
-    ($($path:ident)::+($value:expr)) => {
-        $crate::make_error![@_impl $($path)::+($value)]
+    ($($path:ident)::+$(($value:expr))?) => {
+        $crate::make_error![@_impl $($path)::+$(($value))?]
     };
 
-    (@_impl $err_enum:ident::$case:ident($value:expr)) => {
-        $crate::error::$err_enum::$case($value)
+    (@_impl $err_enum:ident::$case:ident$(($value:expr))?) => {
+        $crate::error::$err_enum::$case$(($value))?
     };
 
-    (@_impl $err_enum:ident::$sub_err_enum:ident::$($err_tail:ident)::+($value:expr)) => {
+    (@_impl $err_enum:ident::$sub_err_enum:ident::$($err_tail:ident)::+$(($value:expr))?) => {
         $crate::error::$err_enum::$sub_err_enum(
-            $crate::make_error![@_impl $sub_err_enum::$($err_tail)::+($value)]
+            $crate::make_error![@_impl $sub_err_enum::$($err_tail)::+$(($value))?]
         )
     };
 }
@@ -32,6 +35,8 @@ pub enum Error {
     CliRead(rustyline::error::ReadlineError),
     VirtualTime(Description),
     Storage(Storage),
+    Scene(Scene),
+    Physics(Physics),
 }
 
 #[derive(Debug)]
@@ -60,12 +65,24 @@ pub enum Storage {
     ObjectList(postgres::Error),
 }
 
+#[derive(Debug)]
+pub enum Scene {
+    UncomputedTrackPart(chrono::Duration),
+    ObjectAlreadyExists(ObjectName),
+    AttractorAlreadyExists(AttractorName),
+}
+
+#[derive(Debug)]
+pub enum Physics {
+    Init(rusqlite::Error),
+}
+
 impl From<clap::Error> for Error {
     fn from(err: clap::Error) -> Self {
         match &err.kind {
             clap::ErrorKind::HelpDisplayed => Self::MessageHelp(err),
             clap::ErrorKind::VersionDisplayed => Self::MessageVersion(err),
-            _ => Self::Parse(err.into())
+            _ => Self::Parse(err.into()),
         }
     }
 }
@@ -104,13 +121,17 @@ impl fmt::Display for Error {
             Error::Sync(desc) => write!(f, "[sync] {}", desc),
             Error::MissingMessage => write!(f, "[missing message]"),
             Error::UnknownMessage(msg) => write!(f, "[unknown message] {}", msg),
-            Error::UnexpectedMessage(msg) => write!(f, "[unexpected message] {}", msg.get_cli_name()),
+            Error::UnexpectedMessage(msg) => {
+                write!(f, "[unexpected message] {}", msg.get_cli_name())
+            }
             Error::MessageHelp(help) => write!(f, "[message help] {}", help),
             Error::MessageVersion(version) => write!(f, "[message version] {}", version),
             Error::Parse(err) => write!(f, "[parse] {}", err),
             Error::CliRead(err) => write!(f, "[cli] {}", err),
             Error::VirtualTime(desc) => write!(f, "[virtual time] {}", desc),
             Error::Storage(err) => write!(f, "[storage] {}", err),
+            Error::Scene(err) => write!(f, "[scene] {}", err),
+            Error::Physics(err) => write!(f, "[physics] {}", err),
         }
     }
 }
@@ -166,7 +187,9 @@ impl fmt::Display for Storage {
             Self::Raw(err) => write!(f, "{}", err),
             Self::SetupSchema(err) => write!(f, "unable to setup schema: {}", err),
             Self::SessionCreate(err) => write!(f, "unable to create new session: {}", err),
-            Self::SessionUpdateAccessTime(err) => write!(f, "unable to update session access time: {}", err),
+            Self::SessionUpdateAccessTime(err) => {
+                write!(f, "unable to update session access time: {}", err)
+            }
             Self::SessionSave(err) => write!(f, "unable to save the session: {}", err),
             Self::SessionLoad(err) => write!(f, "unable to load the session: {}", err),
             Self::SessionRename(err) => write!(f, "unable to find the session: {}", err),
@@ -177,7 +200,44 @@ impl fmt::Display for Storage {
             Self::AddObject(err) => write!(f, "unable to add object to the scene: {}", err),
             Self::RenameObject(err) => write!(f, "unable to rename object to the scene: {}", err),
             Self::ObjectList(err) => write!(f, "unable to display object list: {}", err),
+        }
+    }
+}
 
+impl From<Scene> for Error {
+    fn from(err: Scene) -> Self {
+        Self::Scene(err)
+    }
+}
+
+impl fmt::Display for Scene {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UncomputedTrackPart(when) => write!(
+                f,
+                "`{}`: uncomputed track part",
+                TimeFormat::VirtualTimeShort(*when)
+            ),
+            Self::ObjectAlreadyExists(obj_name) => {
+                write!(f, "`{}`: object already exists", obj_name)
+            },
+            Self::AttractorAlreadyExists(attr_name) => {
+                write!(f, "`{}`: attractor already exists", attr_name)
+            },
+        }
+    }
+}
+
+impl From<Physics> for Error {
+    fn from(err: Physics) -> Self {
+        Self::Physics(err)
+    }
+}
+
+impl fmt::Display for Physics {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Init(err) => write!(f, "unable to init physics: {}", err),
         }
     }
 }

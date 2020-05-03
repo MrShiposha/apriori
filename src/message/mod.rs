@@ -1,15 +1,16 @@
 use super::{
     cli,
     r#type::{
-        ObjectName,
-        Vector,
         Color,
         Distance,
         Mass,
-        GravityCoeff
-    }
+        GravityCoeff,
+        SessionName,
+        ObjectName,
+        AttractorName,
+        Vector,
+    },
 };
-
 
 #[macro_use]
 mod messages_macro;
@@ -91,39 +92,39 @@ messages! {
     message NewSession {
         /// New session's name.
         #[structopt(short, long)]
-        pub name: Option<String>
+        pub name: Option<SessionName>
     }
 
     #[cli(name = "save-session-as", about = "save current session with new name")]
     message SaveSession {
         /// Session's name.
         #[structopt(short, long)]
-        pub name: String
+        pub name: SessionName
     }
 
     #[cli(name = "load-session", about = "load existing session")]
     message LoadSession {
         /// Session's name.
         #[structopt(short, long)]
-        pub name: String
+        pub name: SessionName
     }
 
     #[cli(name = "rename-session", about = "rename session")]
     message RenameSession {
         /// Old session's name.
         #[structopt(short, long)]
-        pub old_name: String,
+        pub old_name: SessionName,
 
         /// New session's name.
         #[structopt(short, long)]
-        pub new_name: String
+        pub new_name: SessionName
     }
 
     #[cli(name = "delete-session", about = "delete session")]
     message DeleteSession {
         /// Session's name.
         #[structopt(short, long)]
-        pub name: String
+        pub name: SessionName
     }
 
     #[cli(name = "add-obj", about = "add new object to the scene")]
@@ -131,9 +132,9 @@ messages! {
         /// Object's name.
         #[structopt(short, long)]
         pub name: Option<ObjectName>,
-        
+
         /// Object's location.
-        #[structopt(short, long, parse(try_from_str = cli::parse_vector))]
+        #[structopt(short, long, allow_hyphen_values = true, parse(try_from_str = cli::parse_vector))]
         pub location: Vector,
 
         /// When the object have to appear.
@@ -153,36 +154,51 @@ messages! {
         #[structopt(short, long, default_value = "1")]
         pub mass: Mass,
 
-        /// Gravity coefficient
-        #[structopt(short, long, default_value = "1")]
-        pub gravity: GravityCoeff,
-
         /// Compute step
         #[structopt(short, long, default_value = "1s", parse(try_from_str = cli::parse_time))]
         pub step: chrono::Duration,
 
-        /// The lower border of time, 
-        /// when an object allowed to be on the scene.
-        #[structopt(long, allow_hyphen_values = true, parse(try_from_str = cli::parse_time))]
-        pub min_t: Option<chrono::Duration>,
-
-        /// The upper border of time, 
-        /// when an object allowed to be on the scene.
-        #[structopt(long, allow_hyphen_values = true, parse(try_from_str = cli::parse_time))]
-        pub max_t: Option<chrono::Duration>,
+        /// Buffered track size
+        #[structopt(long, default_value = "64")]
+        pub track_size: usize,
     }
 
     #[cli(name = "rename-obj", about = "rename object on the scene")]
     message RenameObject {
         /// Old object's name.
         #[structopt(short, long)]
-        pub old_name: String,
+        pub old_name: ObjectName,
 
         /// New object's name.
         #[structopt(short, long)]
-        pub new_name: String
+        pub new_name: ObjectName
+    }
+
+    #[cli(name = "add-attr", about = "add new attractor to the scene")]
+    message AddAttractor {
+        /// Attractor's name
+        #[structopt(short, long)]
+        pub name: Option<AttractorName>,
+
+        /// Attractor's location
+        #[structopt(short, long, allow_hyphen_values = true, parse(try_from_str = cli::parse_vector))]
+        pub location: Vector,
+
+        /// Attractor's mass
+        #[structopt(short, long, default_value = "1")]
+        pub mass: Mass,
+
+        /// Attractor's gravity coefficient
+        #[structopt(short, long, default_value = "1")]
+        pub gravity_coeff: GravityCoeff,
     }
 
     #[cli(name = "list-objects", about = "list all objects in the current session")]
     message ListObjects {}
+
+    #[cli(name = "show-names", about = "display objects' names")]
+    message ShowNames {}
+
+    #[cli(name = "hide-names", about = "hide object's names")]
+    message HideNames {}
 }

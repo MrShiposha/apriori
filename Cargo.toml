@@ -18,6 +18,9 @@ rand = "0.7.3"
 phf = { version = "0.8", features = ["macros"] }
 postgres = { version = "0.17.2", features=["with-chrono-0_4"] }
 postgres-types = { version = "*", features=["derive"] }
+rusqlite = { version = "0.23.1", features = ["bundled"] }
+threadpool = "1.7.1"
+num_cpus = "*"
 time = "*"
 clap = "*"
 nalgebra = "*"

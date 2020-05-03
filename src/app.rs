@@ -1,54 +1,46 @@
+use super::{
+    cli, graphics,
+    message::{self, Message},
+    r#type::{Color, RawTime, SessionId, TimeFormat, TimeUnit},
+    scene::{physics::Engine, SceneManager},
+    shared_access,
+    storage::StorageManager,
+    Error, Result, Shared,
+};
+use kiss3d::{
+    camera::{
+        Camera,
+        FirstPerson,
+    },
+    light::Light,
+    event::{Action, Key, Modifiers, WindowEvent},
+    scene::SceneNode,
+    text::Font,
+    window::{CanvasSetup, NumSamples, Window},
+};
+use lazy_static::lazy_static;
+use log::{error, info, trace};
+use nalgebra::{Point2, Point3, Vector2};
 use std::{
     fmt::{self, Write},
     path::PathBuf,
-    sync::mpsc::TryRecvError
-};
-use kiss3d::{
-    window::{Window, CanvasSetup, NumSamples},
-    scene::SceneNode,
-    camera::FirstPerson,
-    event::{WindowEvent, Key, Action, Modifiers},
-    text::Font
-};
-use nalgebra::{Point3, Point2};
-use log::{
-    trace,
-    info,
-    error
+    sync::mpsc::TryRecvError,
 };
 use structopt::StructOpt;
-use lazy_static::lazy_static;
-use super::{
-    message::{self, Message},
-    Shared,
-    shared_access,
-    Result,
-    Error,
-    cli,
-    storage::StorageManager,
-    graphics,
-    r#type::{
-        Color, 
-        RawTime,
-        TimeFormat, 
-        TimeUnit,
-        SessionId
-    }
-};
 
 const LOG_TARGET: &'static str = "application";
 pub const APP_NAME: &'static str = "apriori";
 
-const CLOSE_MESSAGE: &'static str = "Simulation is completed.\nTo close the application, run `shutdown` message.";
+const CLOSE_MESSAGE: &'static str =
+    "Simulation is completed.\nTo close the application, run `shutdown` message.";
 
 const STORAGE_CONNECTION_STRING: &'static str = "host=localhost user=postgres";
 
 lazy_static! {
     pub static ref APP_CLI_PROMPT: String = format!("{}> ", APP_NAME);
     pub static ref ACCESS_UPDATE_TIME: chrono::Duration = chrono::Duration::seconds(30);
-    pub static ref SESSION_MAX_HANG_TIME: chrono::Duration = chrono::Duration::seconds(
-        ACCESS_UPDATE_TIME.num_seconds() + 10
-    );
+    pub static ref SESSION_MAX_HANG_TIME: chrono::Duration =
+        chrono::Duration::seconds(ACCESS_UPDATE_TIME.num_seconds() + 10);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -56,7 +48,7 @@ pub enum State {
     Simulating,
     Paused,
     Completed,
-    Off
+    Off,
 }
 
 impl State {
@@ -83,7 +75,7 @@ impl fmt::Display for State {
             State::Simulating => write!(f, "[SIMULATING]"),
             State::Paused => write!(f, "[PAUSED]"),
             State::Completed => write!(f, "[COMPLETED]"),
-            State::Off => write!(f, "[OFF]")
+            State::Off => write!(f, "[OFF]"),
         }
     }
 }
@@ -98,36 +90,52 @@ pub struct App {
     virtual_time_step: chrono::Duration,
     frame_delta_time: chrono::Duration,
     is_stats_enabled: bool,
-    frame_deltas_ms_sum: usize, 
+    frame_deltas_ms_sum: usize,
     frame_count: usize,
     storage_mgr: StorageManager,
+    scene_mgr: SceneManager,
+    engine: Engine,
     session_id: SessionId,
-    unnamed_object_index: usize,
+    object_index: usize,
+    attractor_index: usize,
+    is_names_displayed: bool,
 }
 
 impl App {
     pub fn new(log_filter: log::LevelFilter) -> Self {
-        super::logger::Logger::init(log_filter)
-            .expect("unable to initialize logging system");
+        super::logger::Logger::init(log_filter).expect("unable to initialize logging system");
 
-        let mut storage_mgr = StorageManager::setup(STORAGE_CONNECTION_STRING)
-            .expect("unable to connect to storage");
+        let mut storage_mgr =
+            StorageManager::setup(STORAGE_CONNECTION_STRING).expect("unable to connect to storage");
 
         let default_name = None;
-        let session_id = storage_mgr.session().new(default_name)
+        let session_id = storage_mgr
+            .session()
+            .new(default_name)
             .expect("unable to create new session");
 
+        let mut window = Window::new_with_setup(
+            APP_NAME,
+            800,
+            600,
+            CanvasSetup {
+                vsync: true,
+                samples: NumSamples::Four,
+            },
+        );
+        window.set_light(Light::StickToCamera);
+
+        let mut camera = FirstPerson::new(Point3::new(0.0, 0.0, -10.0), Point3::origin());
+        camera.rebind_up_key(Some(Key::W));
+        camera.rebind_down_key(Some(Key::S));
+        camera.rebind_left_key(Some(Key::A));
+        camera.rebind_right_key(Some(Key::D));
+
+        let scene = window.scene().clone();
+
         Self {
-            window: Window::new_with_setup(
-                APP_NAME, 
-                800, 
-                600, 
-                CanvasSetup {
-                    vsync: true,
-                    samples: NumSamples::Four
-                }
-            ),
-            camera: FirstPerson::new(Point3::new(0.0, 1.0, 0.0), Point3::origin()),
+            window,
+            camera: camera,
             state: State::Paused.into(),
             real_time: chrono::Duration::zero(),
             last_session_update_time: chrono::Duration::zero(),
@@ -138,13 +146,18 @@ impl App {
             frame_deltas_ms_sum: 0,
             frame_count: 0,
             storage_mgr,
+            scene_mgr: SceneManager::new(scene),
+            engine: Engine::new().expect("physics engine initialization"),
             session_id,
-            unnamed_object_index: 0
+            object_index: 0,
+            attractor_index: 0,
+            is_names_displayed: false,
         }
     }
 
     pub fn run(&mut self, history: Option<PathBuf>) {
         let cli = cli::Observer::new(self.state.share(), history);
+        let one_second_nanos = chrono::Duration::seconds(1).num_nanoseconds().unwrap();
 
         loop {
             let loop_begin = time::precise_time_ns();
@@ -161,27 +174,37 @@ impl App {
             let state = *shared_access![self.state];
             match state {
                 State::Simulating => {
-                    self.frame_delta_time = chrono::Duration::span(|| self.simulate_frame());
-                    self.frame_deltas_ms_sum += self.frame_delta_time.num_milliseconds() as usize;
+                    let delta_nanos = self.frame_delta_time.num_nanoseconds().unwrap();
+                    let vt_step_nanos = self.virtual_time_step.num_nanoseconds().unwrap();
+                    let step = delta_nanos * vt_step_nanos / one_second_nanos;
+                    self.virtual_time = self.virtual_time + chrono::Duration::nanoseconds(step);
+
+                    self.simulate_frame();
                     self.render_frame();
                     self.process_console(&cli);
-                },
+                }
                 State::Paused => {
+                    self.simulate_frame();
                     self.render_frame();
                     self.process_console(&cli);
-                },
+                }
                 State::Completed => {
                     self.draw_text(CLOSE_MESSAGE, Point2::origin(), Color::new(1.0, 0.0, 0.0));
                     self.process_console(&cli);
-                    
+
                     self.window.render_with_camera(&mut self.camera);
-                },
-                State::Off => break
+                }
+                State::Off => break,
             }
 
             let loop_end = time::precise_time_ns();
             let loop_time = loop_end - loop_begin;
-            self.real_time = self.real_time + chrono::Duration::nanoseconds(loop_time as RawTime);
+
+            self.frame_delta_time = chrono::Duration::nanoseconds(loop_time as RawTime);
+            self.frame_deltas_ms_sum += self.frame_delta_time.num_milliseconds() as usize;
+            self.frame_count += 1;
+
+            self.real_time = self.real_time + self.frame_delta_time;
         }
 
         cli.join();
@@ -192,9 +215,9 @@ impl App {
         assert_ne!(state, State::Off);
 
         match message {
-            Message::GlobalHelp(_)
-            | Message::GlobalHelpShort(_) => {
-                let max_name = Message::cli_list().iter()
+            Message::GlobalHelp(_) | Message::GlobalHelpShort(_) => {
+                let max_name = Message::cli_list()
+                    .iter()
                     .map(|(name, _)| name.len())
                     .max()
                     .unwrap();
@@ -204,18 +227,21 @@ impl App {
                     print!("\t{:<width$}", name, width = max_name);
                     match about {
                         Some(about) => println!("  // {}", about),
-                        None => println!()
+                        None => println!(),
                     }
                 }
 
                 Ok(())
-            },
-            Message::Run(_) 
+            }
+            Message::Run(_)
             | Message::Continue(_)
-            | Message::RunShort(_) 
-            | Message::ContinueShort(_) if state.is_run() => self.continue_simulation(),
-            Message::Pause(_)
-            | Message::PauseShort(_) if state.is_run() => self.pause_simulation(),
+            | Message::RunShort(_)
+            | Message::ContinueShort(_)
+                if state.is_run() =>
+            {
+                self.continue_simulation()
+            }
+            Message::Pause(_) | Message::PauseShort(_) if state.is_run() => self.pause_simulation(),
             Message::Shutdown(_) => self.shutdown(),
             Message::TimeFormat(_) => {
                 println!();
@@ -223,7 +249,8 @@ impl App {
                 println!("\tTimeUnit:");
 
                 let units = TimeUnit::variants_and_aliases();
-                let unit_max_width = units.iter()
+                let unit_max_width = units
+                    .iter()
                     .map(|aliases| aliases.iter().map(|alias| alias.len()).max().unwrap())
                     .max()
                     .unwrap();
@@ -231,73 +258,63 @@ impl App {
                 for unit_aliases in units {
                     print!("\t");
                     for alias in *unit_aliases {
-                        print!(
-                            " {:^width$} |",
-                            alias,
-                            width = unit_max_width
-                        );
+                        print!(" {:^width$} |", alias, width = unit_max_width);
                     }
                     println!();
                 }
                 println!("\tTimeComponent: [-]{{Digit}}{{TimeUnit}}");
                 println!("\tTimeInputFormat: {{TimeComponent}}[:{{TimeComponent}}]*");
                 println!();
-                
+
                 Ok(())
-            },
+            }
             Message::VirtualTimeStep(msg) => self.handle_virtual_time_step(state, msg),
             Message::VirtualTime(msg) => self.handle_virtual_time(state, msg),
             Message::GetFrameDeltaTime(_) => {
                 println!("{}", TimeFormat::FrameDelta(self.frame_delta_time));
                 Ok(())
-            },
+            }
             Message::GetFrameCount(_) => {
                 println!("{}", self.frame_count);
                 Ok(())
-            },
+            }
             Message::GetFpms(_) => {
                 println!("{}", self.frame_per_ms());
                 Ok(())
-            },
+            }
             Message::ListSessions(_) => {
                 println!("\n\t-- sessions list --");
                 self.storage_mgr.session().print_list()
-            },
-            Message::GetSession(_) => {
-                self.storage_mgr.session().get(self.session_id)
             }
-            Message::NewSession(msg) => {
-                self.handle_new_session(msg)
-            }
+            Message::GetSession(_) => self.storage_mgr.session().get(self.session_id),
+            Message::NewSession(msg) => self.handle_new_session(msg),
             Message::SaveSession(msg) => {
                 self.storage_mgr.session().save(self.session_id, &msg.name)
-            },
-            Message::LoadSession(msg) => {
-                self.handle_load_session(msg)
-            },
-            Message::RenameSession(msg) => {
-                self.storage_mgr.session().rename(&msg.old_name, &msg.new_name)
-            },
-            Message::DeleteSession(msg) => {
-                self.storage_mgr.session().delete(&msg.name)
-            },
+            }
+            Message::LoadSession(msg) => self.handle_load_session(msg),
+            Message::RenameSession(msg) => self
+                .storage_mgr
+                .session()
+                .rename(&msg.old_name, &msg.new_name),
+            Message::DeleteSession(msg) => self.storage_mgr.session().delete(&msg.name),
             Message::AddObject(msg) if state.is_run() => self.handle_add_object(msg),
             Message::RenameObject(msg) if state.is_run() => self.handle_rename_object(msg),
             Message::ListObjects(_) => {
                 println!("\n\t-- object list --");
                 self.storage_mgr.object().print_list(&self.session_id)
             },
-            unexpected => return Err(Error::UnexpectedMessage(unexpected))
+            Message::AddAttractor(msg) if state.is_run() => self.handler_add_attractor(msg),
+            Message::ShowNames(_) => self.handle_show_names(),
+            Message::HideNames(_) => self.handle_hide_names(),
+            unexpected => return Err(Error::UnexpectedMessage(unexpected)),
         }
     }
 
     fn check_window_opened(&mut self) {
         let state = *shared_access![self.state];
-        if self.window.should_close() && matches![
-            state, State::Simulating | State::Paused
-        ] {
+        if self.window.should_close() && matches![state, State::Simulating | State::Paused] {
             self.close();
-        } 
+        }
     }
 
     fn close(&mut self) {
@@ -328,77 +345,98 @@ impl App {
     }
 
     fn handle_add_object(&mut self, msg: message::AddObject) -> Result<()> {
-        let object_index = self.unnamed_object_index;
-        self.unnamed_object_index += 1;
+        let object_index = self.object_index;
+        self.object_index += 1;
 
-        self.storage_mgr.object().add(
-            self.session_id,
-            &msg,
-            format!("object-{}", object_index)
-        )?;
+        let default_name = format!("object-{}", object_index);
 
-        let name = match msg.name {
-            Some(name) => name,
-            None => format!("object-{}", object_index)
-        };
+        let object_storage = self.storage_mgr.object();
+        self.scene_mgr.add_object(self.session_id, object_storage, &msg, &default_name)?;
 
-        println!("new object: '{}'", name);
-        println!("location: {}", msg.location);
-        println!("first appearance: {}", TimeFormat::VirtualTimeShort(msg.time.unwrap_or(self.virtual_time)));
-        println!("color: {}", msg.color.unwrap_or(graphics::random_color()));
-        println!("radius: {}", msg.radius);
-        println!("mass: {}", msg.mass);
-        println!("lower time border: {:?}", msg.min_t);
-        println!("upper time border: {:?}", msg.max_t);
+        Ok(())
+    }
+
+    fn handler_add_attractor(&mut self,  msg: message::AddAttractor) -> Result<()> {
+        let attractor_index = self.attractor_index;
+        self.attractor_index += 1;
+
+        let default_name = format!("attractor-{}", attractor_index);
+
+        let attractor_id = self
+            .storage_mgr
+            .attractor()
+            .add(
+                self.session_id,
+                &msg,
+                &default_name
+            )?;
+
+        self.scene_mgr.add_attractor(attractor_id, &msg, &default_name)?;
 
         Ok(())
     }
 
     fn handle_rename_object(&mut self, msg: message::RenameObject) -> Result<()> {
-        self.storage_mgr.object().rename(
-            self.session_id,
-            &msg.old_name,
-            &msg.new_name
-        )
+        self.storage_mgr
+            .object()
+            .rename(self.session_id, &msg.old_name, &msg.new_name)
     }
 
-    fn handle_virtual_time_step(&mut self, state: State, msg: message::VirtualTimeStep) -> Result<()> {
+    fn handle_virtual_time_step(
+        &mut self,
+        state: State,
+        msg: message::VirtualTimeStep,
+    ) -> Result<()> {
         match msg.step {
-            Some(step) if state.is_run() => if msg.reverse {
-                self.virtual_time_step = -step;
-            } else {
-                self.virtual_time_step = step;
-            },
-            None => if msg.reverse {
-                println!("{}", TimeFormat::VirtualTimeShort(-self.virtual_time_step));
-            } else {
-                println!("{}", TimeFormat::VirtualTimeShort(self.virtual_time_step));
-            },
-            _ => return Err(Error::VirtualTime(
-                "setting virtual time step after the simulation has complete is forbidden".into()
-            ))
+            Some(step) if state.is_run() => {
+                if msg.reverse {
+                    self.virtual_time_step = -step;
+                } else {
+                    self.virtual_time_step = step;
+                }
+            }
+            None => {
+                if msg.reverse {
+                    println!("{}", TimeFormat::VirtualTimeShort(-self.virtual_time_step));
+                } else {
+                    println!("{}", TimeFormat::VirtualTimeShort(self.virtual_time_step));
+                }
+            }
+            _ => {
+                return Err(Error::VirtualTime(
+                    "setting virtual time step after the simulation has complete is forbidden"
+                        .into(),
+                ))
+            }
         }
+
+        self.engine.update_time_direction(&self.virtual_time_step);
 
         Ok(())
     }
 
     fn handle_virtual_time(&mut self, state: State, msg: message::VirtualTime) -> Result<()> {
         match msg.time {
-            Some(time) if state.is_run() => if msg.reverse {
-                self.virtual_time = -time;
-            } else {
-                self.virtual_time = time;
-            },
-            None if state.is_run() && msg.origin => self.virtual_time = chrono::Duration::zero(),
-            None if !msg.origin => if msg.reverse {
-                println!("{}", TimeFormat::VirtualTimeShort(-self.virtual_time));
-            } else {
-                println!("{}", TimeFormat::VirtualTimeShort(self.virtual_time));
+            Some(time) if state.is_run() => {
+                if msg.reverse {
+                    self.virtual_time = -time;
+                } else {
+                    self.virtual_time = time;
+                }
             }
-            _ => return Err(Error::VirtualTime(
-                "setting virtual time after the simulation has complete is forbidden".into()
-            )),
-            
+            None if state.is_run() && msg.origin => self.virtual_time = chrono::Duration::zero(),
+            None if !msg.origin => {
+                if msg.reverse {
+                    println!("{}", TimeFormat::VirtualTimeShort(-self.virtual_time));
+                } else {
+                    println!("{}", TimeFormat::VirtualTimeShort(self.virtual_time));
+                }
+            }
+            _ => {
+                return Err(Error::VirtualTime(
+                    "setting virtual time after the simulation has complete is forbidden".into(),
+                ))
+            }
         }
 
         Ok(())
@@ -408,7 +446,7 @@ impl App {
         let new_session_id = self.storage_mgr.session().new(msg.name)?;
         self.storage_mgr.session().unlock(self.session_id)?;
         self.session_id = new_session_id;
-        
+
         Ok(())
     }
 
@@ -416,6 +454,28 @@ impl App {
         let new_session_id = self.storage_mgr.session().load(&msg.name)?;
         self.storage_mgr.session().unlock(self.session_id)?;
         self.session_id = new_session_id;
+
+        Ok(())
+    }
+
+    fn handle_show_names(&mut self) -> Result<()> {
+        self.is_names_displayed = true;
+
+        info! {
+            target: LOG_TARGET,
+            "objects' names are shown"
+        }
+
+        Ok(())
+    }
+
+    fn handle_hide_names(&mut self) -> Result<()> {
+        self.is_names_displayed = false;
+
+        info! {
+            target: LOG_TARGET,
+            "objects' names are hided"
+        }
 
         Ok(())
     }
@@ -435,25 +495,51 @@ impl App {
     }
 
     fn simulate_frame(&mut self) {
-        let vtime_step = self.virtual_time_step.num_milliseconds() as f32;
-        let frame_step = vtime_step * self.frame_delta_time.num_milliseconds() as f32 / 1000.0;
-        self.virtual_time = self.virtual_time + chrono::Duration::microseconds(
-            (frame_step * 1000.0) as RawTime
+        self.scene_mgr.query_objects_by_time(
+            &self.virtual_time, 
+            &mut self.engine, 
+            {
+                let is_names_displayed = self.is_names_displayed;
+                let window = &mut self.window;
+                let window_size = Vector2::new(window.width() as f32, window.height() as f32);
+                let hidpi_factor = window.hidpi_factor() as f32;
+                let text_size = 85.0;
+                let half_text_size = text_size / 2.0;
+                let quarter_text_size = half_text_size / 2.0;
+                let font = Font::default();
+
+                let camera = &mut self.camera;
+
+                move |name, object, location| {
+                    if is_names_displayed {
+                        let mut text_location = camera.project(
+                            &Point3::from(location), 
+                            &window_size
+                        ).scale(hidpi_factor) - Vector2::new(quarter_text_size, -half_text_size);
+                        text_location[1] = window_size[1] * hidpi_factor - text_location[1];
+
+                        window.draw_text(
+                            format!("+ {}", name).as_ref(), 
+                            &Point2::from(text_location), 
+                            text_size, 
+                            &font, 
+                            &graphics::opposite_color(object.color())
+                        );
+                    }
+                }
+            }
         );
-
-        // TODO
-        std::thread::sleep(std::time::Duration::from_millis(100));
-
-        self.frame_count += 1;
     }
 
     fn handle_window_events(&mut self) {
         for event in self.window.events().iter() {
             match event.value {
-                WindowEvent::Key(key, action, mods) => if let Err(err) = self.handle_key(key, action, mods) {
-                    error! {
-                        target: LOG_TARGET,
-                        "{}", err
+                WindowEvent::Key(key, action, mods) => {
+                    if let Err(err) = self.handle_key(key, action, mods) {
+                        error! {
+                            target: LOG_TARGET,
+                            "{}", err
+                        }
                     }
                 },
                 _ => {}
@@ -462,16 +548,18 @@ impl App {
     }
 
     fn update_session_access_time(&mut self) -> Result<()> {
-        if self.real_time.num_milliseconds() >= (
-            self.last_session_update_time.num_milliseconds()
-            + ACCESS_UPDATE_TIME.num_milliseconds()
-        ) {
+        if self.real_time.num_milliseconds()
+            >= (self.last_session_update_time.num_milliseconds()
+                + ACCESS_UPDATE_TIME.num_milliseconds())
+        {
             trace! {
                 target: LOG_TARGET,
                 "update session access time"
             };
 
-            self.storage_mgr.session().update_access_time(self.session_id)?;
+            self.storage_mgr
+                .session()
+                .update_access_time(self.session_id)?;
             self.last_session_update_time = self.real_time;
         }
 
@@ -485,22 +573,28 @@ impl App {
                 match state {
                     State::Simulating => self.pause_simulation(),
                     State::Paused => self.continue_simulation(),
-                    _ => Ok(())
+                    _ => Ok(()),
                 }
-            },
-            Key::Left if matches![action, Action::Press] && shared_access![self.state].is_paused() => {
+            }
+            Key::Left
+                if matches![action, Action::Press] && shared_access![self.state].is_paused() =>
+            {
                 self.virtual_time = self.virtual_time - self.virtual_time_step;
+                self.simulate_frame();
                 Ok(())
-            },
-            Key::Right if matches![action, Action::Press] && shared_access![self.state].is_paused() => {
+            }
+            Key::Right
+                if matches![action, Action::Press] && shared_access![self.state].is_paused() =>
+            {
                 self.virtual_time = self.virtual_time + self.virtual_time_step;
+                self.simulate_frame();
                 Ok(())
             }
             Key::C if modifiers.contains(Modifiers::Control) && matches![action, Action::Press] => {
                 self.close();
                 Ok(())
             }
-            _ => Ok(())
+            _ => Ok(()),
         }
     }
 
@@ -517,14 +611,14 @@ impl App {
                     Err(err) => error! {
                         target: LOG_TARGET,
                         "{}", err
-                    }
+                    },
                 }
-            },
-            Err(TryRecvError::Empty) => {},
+            }
+            Err(TryRecvError::Empty) => {}
             Err(err) => error! {
                 target: LOG_TARGET,
                 "{}", err
-            }
+            },
         }
     }
 
@@ -535,9 +629,9 @@ impl App {
     fn draw_state_text(&mut self) {
         let state = *shared_access![self.state];
         self.draw_text(
-            format!("{}", state).as_ref(), 
+            format!("{}", state).as_ref(),
             Point2::origin(),
-            Color::new(1.0, 1.0, 1.0)
+            Color::new(1.0, 1.0, 1.0),
         );
     }
 
@@ -545,54 +639,40 @@ impl App {
         let pos = Point2::new(0.0, 150.0);
 
         let mut stats_text = String::new();
-        
+
+        writeln!(&mut stats_text, "frame #{}", self.frame_count).unwrap();
+
         writeln!(
             &mut stats_text,
-            "frame #{}", self.frame_count
-        ).unwrap();
-
-        writeln!(
-            &mut stats_text, 
-            "virtual time: {}", 
+            "virtual time: {}",
             TimeFormat::VirtualTimeLong(self.virtual_time)
-        ).unwrap();
+        )
+        .unwrap();
 
         writeln!(
-            &mut stats_text, 
+            &mut stats_text,
             "virtual time step: {}",
             TimeFormat::VirtualTimeShort(self.virtual_time_step)
-        ).unwrap();
+        )
+        .unwrap();
 
         writeln!(
             &mut stats_text,
             "frame delta time: {}",
             TimeFormat::FrameDelta(self.frame_delta_time)
-        ).unwrap();
+        )
+        .unwrap();
 
-        writeln!(
-            &mut stats_text,
-            "frame per ms: {}",
-            self.frame_per_ms()
-        ).unwrap();
+        writeln!(&mut stats_text, "frame per ms: {}", self.frame_per_ms()).unwrap();
 
-        self.draw_text(
-            &stats_text,
-            pos,
-            Color::new(1.0, 0.0, 1.0)
-        );
+        self.draw_text(&stats_text, pos, Color::new(1.0, 0.0, 1.0));
     }
 
     fn draw_text(&mut self, text: &str, pos: Point2<f32>, color: Color) {
         let scale = 75.0;
         let font = Font::default();
-    
-        self.window.draw_text(
-            text, 
-            &pos, 
-            scale, 
-            &font, 
-            &color
-        );
+
+        self.window.draw_text(text, &pos, scale, &font, &color);
     }
 }
 
@@ -604,5 +684,5 @@ pub struct Options {
 
     /// Log level filter
     #[structopt(short, long, default_value = "warn")]
-    pub log_filter: log::LevelFilter
+    pub log_filter: log::LevelFilter,
 }

@@ -5,12 +5,12 @@ macro_rules! messages {
         $(
             $(#[derive($derives:meta)])*
             #[cli(
-                name = $cli_name:literal 
-                $(, about = $about:literal)? 
+                name = $cli_name:literal
+                $(, about = $about:literal)?
                 $(, version = $version:literal)?)
             ]
             message $name:ident {
-                $($tt:tt)* 
+                $($tt:tt)*
             }
         )+
 
@@ -34,7 +34,7 @@ macro_rules! messages {
 
         impl Message {
             /// Returns CLI message list
-            /// 
+            ///
             /// Format: (name, optional about)
             pub fn cli_list() -> &'static Vec<(&'static str, Option<&'static str>)> {
                 use lazy_static::lazy_static;
@@ -42,7 +42,7 @@ macro_rules! messages {
                 lazy_static! {
                     static ref LIST: Vec<(&'static str, Option<&'static str>)> = {
                         #[allow(unused_mut)]
-                        let mut init_list = messages![@_impl cli_list 
+                        let mut init_list = messages![@_impl cli_list
                             $(
                                 ($cli_name, $($about)?)
                             ) +
@@ -64,7 +64,7 @@ macro_rules! messages {
             }
 
             pub fn from_vec(args: &Vec<&str>) -> $crate::Result<Self> {
-                #[cfg(debug_assertions)] 
+                #[cfg(debug_assertions)]
                 {
                     use lazy_static::lazy_static;
                     use std::{
@@ -104,7 +104,7 @@ macro_rules! messages {
 
                 match message_name {
                     $(
-                        $cli_name => { 
+                        $cli_name => {
                             let message = $name::from_vec(args)?;
                             return Ok(Message::$name(message));
                         }
@@ -113,7 +113,7 @@ macro_rules! messages {
                 }
 
                 messages! {
-                    @_impl from_vec(args) for submessages($($($submsg_name($submsg_path)),+)?) 
+                    @_impl from_vec(args) for submessages($($($submsg_name($submsg_path)),+)?)
                     else {
                         Err($crate::Error::UnknownMessage(message_name.into()))
                     }
@@ -202,7 +202,7 @@ macro_rules! messages {
     (@_impl cli_messages $($cli_name:literal) +) => {
         static CLI_MESSAGES: &[&'static str] = &[
             $($cli_name),+
-        ]; 
+        ];
     };
 
     (@_impl cli_list $(($cli_name:literal, $($about:literal)?)) *) => {
@@ -223,7 +223,7 @@ macro_rules! messages {
         $else_block
     };
 
-    (@_impl from_vec($args:expr) for submessages() 
+    (@_impl from_vec($args:expr) for submessages()
         else $else_block:block
     ) => {
         $else_block

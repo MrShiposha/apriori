@@ -1,33 +1,29 @@
 use std::{
-    sync::{
-        Arc,
-        RwLock,
-        RwLockReadGuard,
-        RwLockWriteGuard,
-        LockResult
-    },
+    fmt,
     hash::{Hash, Hasher},
-    fmt
+    sync::{Arc, LockResult, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
 
 const LOG_TARGET: &'static str = "shared";
 
 #[derive(Default)]
 pub struct Shared<T: ?Sized> {
-    inner: Arc<RwLock<T>>
+    inner: Arc<RwLock<T>>,
 }
 
 impl<T> Shared<T> {
     pub fn new() -> Self
-    where T: Default {
+    where
+        T: Default,
+    {
         Self {
-            inner: Arc::new(RwLock::new(T::default()))
+            inner: Arc::new(RwLock::new(T::default())),
         }
     }
 
     pub fn share(&self) -> Self {
         Self {
-            inner: Arc::clone(&self.inner)
+            inner: Arc::clone(&self.inner),
         }
     }
 
@@ -37,7 +33,15 @@ impl<T> Shared<T> {
 
     pub fn write(&self) -> LockResult<RwLockWriteGuard<T>> {
         self.inner.write()
-    } 
+    }
+}
+
+impl<T> Clone for Shared<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
 }
 
 #[macro_export]
@@ -77,22 +81,30 @@ pub fn handle_access_error<E, R, H: FnOnce(E) -> R>(err: E, handler: H) -> R {
 impl<T> From<T> for Shared<T> {
     fn from(from: T) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(from))
+            inner: Arc::new(RwLock::new(from)),
         }
     }
 }
 
 impl<T: fmt::Debug> fmt::Debug for Shared<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        shared_access![self, |err| write!(f, "<unable to debug display secured object> [{}]", err)]
-            .fmt(f)
+        shared_access![self, |err| write!(
+            f,
+            "<unable to debug display secured object> [{}]",
+            err
+        )]
+        .fmt(f)
     }
 }
 
 impl<T: fmt::Display> fmt::Display for Shared<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        shared_access![self, |err| write!(f, "<unable to display secured object> [{}]", err)]
-            .fmt(f)
+        shared_access![self, |err| write!(
+            f,
+            "<unable to display secured object> [{}]",
+            err
+        )]
+        .fmt(f)
     }
 }
 
@@ -106,7 +118,6 @@ impl<T: Eq> Eq for Shared<T> {}
 
 impl<T: Hash> Hash for Shared<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        shared_access![self, |err| panic!("unable to hash secured object: {}", err)]
-            .hash(state);
+        shared_access![self, |err| panic!("unable to hash secured object: {}", err)].hash(state);
     }
 }
