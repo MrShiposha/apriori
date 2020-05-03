@@ -235,8 +235,8 @@ impl Track {
             return Err(make_error![Error::Scene::UncomputedTrackPart(*vtime)]);
         }
 
-        let relative_time = self.track_relative_time(vtime);
-        let node_index = self.track_node_index(vtime);
+        let relative_time = self.offset_time(vtime);
+        let node_index = self.node_index(vtime);
         let lhs_node_time = chrono::Duration::milliseconds(
             self.compute_step.num_milliseconds() * node_index as RawTime
         ) + self.time_start;
@@ -330,7 +330,7 @@ impl Track {
 
     pub fn get_node(&mut self, vtime: &chrono::Duration) -> Option<Shared<TrackNode>> {
         if self.computed_range().contains(vtime) {
-            let node_index = self.track_node_index(vtime);
+            let node_index = self.node_index(vtime);
             Some(self.nodes[node_index].share())
         } else {
             None
@@ -341,27 +341,20 @@ impl Track {
         self.nodes.len() == self.nodes.capacity()
     }
 
-    fn truncate(&mut self, range: impl Into<TruncateRange<chrono::Duration>>) {
+    pub fn truncate(&mut self, range: impl Into<TruncateRange<chrono::Duration>>) {
         let range = range.into();
 
-        let begin_node_delta = self.nodes.truncate(range.map(|time| {
-            // FIXME
-            assert!(time.num_milliseconds() % self.compute_step.num_milliseconds() == 0);
-
-            self.track_node_index(time)
-        }));
-
+        let range = range.map(|time| self.node_index(time));
+        let begin_node_delta = self.nodes.truncate(range);
         self.time_start = self.time_start + self.compute_step * begin_node_delta as i32;
     }
 
-    fn track_node_index(&self, vtime: &chrono::Duration) -> usize {
-        assert!(self.computed_range().contains(vtime));
-
-        (self.track_relative_time(vtime).num_milliseconds() / self.compute_step.num_milliseconds())
+    fn node_index(&self, vtime: &chrono::Duration) -> usize {
+        (self.offset_time(vtime).num_milliseconds() / self.compute_step.num_milliseconds())
             as usize
     }
 
-    fn track_relative_time(&self, vtime: &chrono::Duration) -> chrono::Duration {
+    fn offset_time(&self, vtime: &chrono::Duration) -> chrono::Duration {
         *vtime - self.time_start
     }
 }

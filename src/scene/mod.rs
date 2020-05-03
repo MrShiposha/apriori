@@ -16,6 +16,9 @@ use {
     kiss3d::{
         scene::SceneNode,
     },
+    log::{
+        info,
+    },
     crate::{
         Result,
         make_error,
@@ -29,7 +32,10 @@ use {
                 Track,
                 TrackAtom,
             },
-            physics::Engine,
+            physics::{
+                Engine,
+                TimeDirection,
+            },
         },
         storage,
         r#type::{
@@ -38,6 +44,7 @@ use {
             AttractorId,
             ObjectName,
             Vector,
+            TimeFormat
         },
     }
 };
@@ -50,6 +57,8 @@ pub mod physics;
 
 pub use object::Object4d;
 pub use attractor::Attractor;
+
+const LOG_TARGET: &'static str = "Scene";
 
 pub struct SceneManager {
     objects: HashMap<ObjectName, (Arc<Mutex<Object4d>>, SceneNode)>,
@@ -139,59 +148,59 @@ impl SceneManager {
         mut object_handler: F
     ) {
         let objects = self.objects.iter_mut().map(|(name, (obj, node))| (name, obj, node));
-        let uncomputed_objects = Self::update_objects_locations(
+        Self::update_objects_locations(
             objects,
+            Self::attractors_refs_copy(&self.attractors),
             engine,
             vtime, 
             &mut object_handler
         );
 
-        if !uncomputed_objects.is_empty() {
-            engine.compute(
-                uncomputed_objects.iter()
-                    .map(|(_, object, _)| Arc::clone(*object))
-                    .collect(),
+        // if !uncomputed_objects.is_empty() {
+        //     engine.compute(
+        //         uncomputed_objects.iter()
+        //             .map(|(_, object, _)| Arc::clone(*object))
+        //             .collect(),
 
-                Self::attractors_refs_copy(&self.attractors)
-            );
+        //         Self::attractors_refs_copy(&self.attractors)
+        //     );
 
-            let computed_objects = uncomputed_objects.into_iter();
-            Self::update_objects_locations(
-                computed_objects,
-                engine, 
-                vtime, 
-                &mut object_handler
-            );
-        }
+        //     let computed_objects = uncomputed_objects.into_iter();
+        //     Self::update_objects_locations(
+        //         computed_objects,
+        //         engine, 
+        //         vtime, 
+        //         &mut object_handler
+        //     );
+        // }
     }
 
-    fn update_objects_locations<'a, I, F>( 
+    fn update_objects_locations<'a, I, F>(
         objects: I,
-        engine: &Engine,
+        attractors: Vec<Arc<Attractor>>,
+        engine: &mut Engine,
         vtime: &chrono::Duration, 
         object_handler: &mut F
-    ) -> Vec<(&'a ObjectName, &'a mut Arc<Mutex<Object4d>>, &'a mut SceneNode)>
+    )
     where 
         I: Iterator<Item=(&'a ObjectName, &'a mut Arc<Mutex<Object4d>>, &'a mut SceneNode)>,
         F: FnMut(&str, &Object4d, Vector)
     {
-        let mut uncomputed_objects = vec![];
-        for (name, object, node) in objects {
+        let mut objects = objects.collect::<Vec<_>>();
+
+        engine.update_objects(
+            vtime, 
+            objects.iter().map(|(_, object, _)| Arc::clone(object)).collect(), 
+            attractors,
+        );
+
+        for (name, object, node) in objects.iter_mut() {
             let sync_object = object.lock().unwrap();
 
-            if let Ok(obj_location) = sync_object.track().interpolate(vtime) {
-                node.set_local_translation(obj_location.into());
-                object_handler(name.as_str(), &*sync_object, obj_location);
-            }
-
-            if engine.is_uncomputed(&*sync_object, vtime) {
-                std::mem::drop(sync_object);
-
-                uncomputed_objects.push((name, object, node));
-            }
+            let obj_location = sync_object.track().interpolate(vtime).unwrap();
+            node.set_local_translation(obj_location.into());
+            object_handler(name.as_str(), &*sync_object, obj_location);
         }
-
-        uncomputed_objects
     }
 
     fn attractors_refs_copy(attractors: &HashMap<String, Arc<Attractor>>) -> Vec<Arc<Attractor>> {

@@ -35,6 +35,10 @@ impl Object4d {
         }
     }
 
+    pub fn id(&self) -> ObjectId {
+        self.id
+    }
+
     pub fn mass(&self) -> Mass {
         self.mass
     }

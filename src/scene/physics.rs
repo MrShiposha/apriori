@@ -3,6 +3,7 @@ use {
     lazy_static::lazy_static,
     rusqlite::{params, Connection, NO_PARAMS},
     threadpool::ThreadPool,
+    log::info,
     crate::{
         make_error, 
         scene::{
@@ -17,17 +18,20 @@ use {
         r#type::{
             Vector,
             Mass,
+            TimeFormat,
         },
         shared::Shared,
         Result
     },
 };
 
+const LOG_TARGET: &'static str = "physics";
+
 pub struct Engine {
     /// Occupied spaces DB
     osdb: Connection,
     compute_pool: ThreadPool,
-    time_direction: TimeDirection,
+    update_relative_time: f32,
 }
 
 impl Engine {
@@ -36,44 +40,89 @@ impl Engine {
             osdb: Connection::open_in_memory()
                 .map_err(|err| make_error![Error::Physics::Init(err)])?,
             compute_pool: ThreadPool::new(num_cpus::get()),
-            time_direction: TimeDirection::Forward,
+            update_relative_time: 0.25,
         };
 
         Ok(engine)
     }
 
-    pub fn update_time_direction(&mut self, time_step: &chrono::Duration) {
-        lazy_static! {
-            static ref ZERO: chrono::Duration = chrono::Duration::zero();
-        }
-
-        if *time_step > *ZERO {
-            self.time_direction = TimeDirection::Forward;
-        } else {
-            self.time_direction = TimeDirection::Backward;
-        }
+    pub fn lower_update_time_threshold(&self) -> f32 {
+        self.update_relative_time
     }
 
-    pub fn is_uncomputed(&self, object: &Object4d, vtime: &chrono::Duration) -> bool {
+    pub fn upper_update_time_threshold(&self) -> f32 {
+        1.0 - self.update_relative_time
+    }
+
+    pub fn track_relative_time(&self, object: &Object4d, vtime: &chrono::Duration) -> f32 {
+        assert!((0.0..1.0).contains(&self.update_relative_time));
+
         let track = object.track();
-        if !track.computed_range().contains(&vtime) {
-            return true;
-        }
-
         let track_time_start = track.time_start();
-        let computed_duration = track.time_end() - track_time_start;
-        let half_computed_duration = computed_duration / 2;
-        let uncomputed_border = track_time_start + half_computed_duration;
-        let offset = track_time_start + *vtime;
+        let computed_duration = (track.time_end() - track_time_start).num_milliseconds() as f32;
+        let offset = (*vtime - track_time_start).num_milliseconds() as f32;
+        let relative_time = offset / computed_duration;
 
-        match self.time_direction {
-            TimeDirection::Forward => offset > uncomputed_border,
-            TimeDirection::Backward => offset < uncomputed_border,
+        relative_time
+    }
+
+    pub fn update_objects(
+        &mut self, 
+        vtime: &chrono::Duration, 
+        mut objects: Vec<Arc<Mutex<Object4d>>>, 
+        attractors: Vec<Arc<Attractor>>
+    ) {
+        // TODO load from DB
+
+        macro_rules! log_update {
+            ($id:expr, $from:expr => $to:ident) => {
+                info! {
+                    target: LOG_TARGET,
+                    "`{}`: update track from {} to /{}/",
+                    $id,
+                    TimeFormat::VirtualTimeShort($from),
+                    stringify![$to]
+                }
+            };
         }
+
+        let mut compute_direction = TimeDirection::Forward;
+        let mut uncomputed_objects = vec![];
+
+        while let Some(object) = objects.pop() {
+            let rt = self.track_relative_time(
+                &*object.lock().unwrap(), 
+                vtime
+            );
+
+            if rt.is_nan() || rt < self.lower_update_time_threshold() || rt > self.upper_update_time_threshold() {
+                let mut sync_object = object.lock().unwrap();
+                let track = sync_object.track_mut();
+                let half_time = track.time_start() + (track.time_end() - track.time_start()) / 2;
+
+                if rt.is_nan() || rt > self.upper_update_time_threshold() {
+                    compute_direction = TimeDirection::Forward;
+                    track.truncate(..half_time);
+
+                    log_update!(sync_object.id(), half_time => future);
+                }  else {
+                    compute_direction = TimeDirection::Backward;
+                    track.truncate(half_time..);
+
+                    log_update!(sync_object.id(), half_time => past);
+                }
+
+                std::mem::drop(sync_object);
+                uncomputed_objects.push(object);
+            }
+        }
+
+        self.compute(compute_direction, uncomputed_objects, attractors);
     }
 
     pub fn compute(
         &mut self, 
+        compute_time_direction: TimeDirection,
         mut objects: Vec<Arc<Mutex<Object4d>>>,
         attractors: Vec<Arc<Attractor>>,
     ) {
@@ -83,7 +132,7 @@ impl Engine {
         let last_node: fn(&Track) -> Shared<TrackNode>; 
         let last_atom: for<'n> fn(&'n TrackNode) -> &'n TrackAtom;
         
-        match self.time_direction {
+        match compute_time_direction {
             TimeDirection::Forward => {
                 add_node = Track::push_back;
                 last_node = Track::node_end;
@@ -118,7 +167,10 @@ impl Engine {
                         let node = node.read().unwrap();
 
                         let atom = last_atom(&*node);
-                        let step = track.relative_compute_step();
+                        let step = match compute_time_direction { 
+                            TimeDirection::Forward => track.relative_compute_step(),
+                            TimeDirection::Backward => -track.relative_compute_step(),
+                        };
 
                         let mut new_atom = atom.at_next_location(step);
 
@@ -173,6 +225,7 @@ fn compute_acceleration(obj_mass: Mass, location: &Vector, attractors: &Vec<Arc<
     acceleration
 }
 
+#[derive(Clone, Copy)]
 pub enum TimeDirection {
     Forward,
     Backward,

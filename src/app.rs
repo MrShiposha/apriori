@@ -410,8 +410,6 @@ impl App {
             }
         }
 
-        self.engine.update_time_direction(&self.virtual_time_step);
-
         Ok(())
     }
 
