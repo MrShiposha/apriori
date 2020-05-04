@@ -18,6 +18,7 @@ use {
     },
 };
 
+#[derive(Clone)]
 pub struct TrackAtom {
     location: Vector,
     velocity: Vector,

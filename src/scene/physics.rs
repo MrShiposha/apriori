@@ -1,7 +1,7 @@
 use {
     std::{
         collections::hash_map::HashMap,
-        sync::{Arc, RwLock},
+        sync::mpsc,
     },
     rusqlite::{params, NO_PARAMS},
     threadpool::ThreadPool,
@@ -270,8 +270,6 @@ impl Engine {
         mut objects: Vec<(ObjectId, Shared<Object4d>)>,
         attractors: Vec<Shared<Attractor>>,
     ) {
-        // TODO compute collisions after each step
-
         let add_node: fn(&mut Track, TrackNode); 
         let last_node: fn(&Track) -> Shared<TrackNode>; 
         let last_atom: for<'n> fn(&'n TrackNode) -> &'n TrackAtom;
@@ -307,6 +305,8 @@ impl Engine {
         let mut remaining = &mut temp_vec;
 
         while !objects.is_empty() {
+            let (track_parts_sender, track_parts_receiver) = mpsc::channel();
+
             while let Some((obj_id, object)) = objects.pop() {
                 let sync_object = shared_access![object];
                 if !sync_object.track().is_fully_computed() {
@@ -314,10 +314,10 @@ impl Engine {
 
                     let object = object.share();
                     let attractors = attractors.clone();
+                    let track_parts_sender = track_parts_sender.clone();
                     self.compute_pool.execute(move || {
                         let mut sync_object = shared_access![mut object];
                         let obj_mass = sync_object.mass();
-                        let obj_radius = sync_object.radius();
 
                         let track = sync_object.track_mut();
 
@@ -335,29 +335,7 @@ impl Engine {
                             TimeDirection::Backward => -track.relative_compute_step(),
                         };
 
-                        // std::mem::drop(track);
-
                         let mut new_atom = atom.at_next_location(step);
-
-                        // self.place_track_part(
-                        //     &mut *sync_object, 
-                        //     node.share(), 
-                        //     atom, 
-                        //     new_atom
-                        // );
-
-                        // TODO: Check collisions
-                        // let new_occupied_space = OccupiedSpace::with_track_part(
-                        //     obj_id, 
-                        //     obj_radius, 
-                        //     atom.location(), 
-                        //     time, 
-                        //     new_atom.location(), 
-                        //     new_time
-                        // );
-
-                        // self.oss.add_occupied_space(new_occupied_space)
-                        //     .map_err(|err| make_error![Error::Storage::AddOccupiedSpace(err)])?;
 
                         match Self::atom_set_velocity(
                             obj_mass, 
@@ -365,7 +343,25 @@ impl Engine {
                             step, 
                             attractors
                         ) {
-                            Ok(()) => add_node(track, new_atom.into()),
+                            Ok(()) => {
+                                let track_part = TrackPart::new(
+                                    obj_id,
+                                    object.share(),
+                                    node.share(),
+                                    add_node,
+                                    atom.clone(), 
+                                    time,
+                                    new_atom,
+                                    new_time
+                                );
+                                
+                                if let Err(err) = track_parts_sender.send(track_part) {
+                                    error! {
+                                        target: LOG_TARGET,
+                                        "unable to send track part: {}", err
+                                    }
+                                }
+                            },
                             Err(err) => error! {
                                 target: LOG_TARGET,
                                 "unable to add new track node to the object `{}`: {}", 
@@ -377,8 +373,63 @@ impl Engine {
                 }
             }
 
+            // Sender must only be available in thr computational threads.
+            // If not, the `process_track_parts` will hang.
+            std::mem::drop(track_parts_sender);
+
             std::mem::swap(&mut objects, &mut remaining);
-            self.compute_pool.join();
+
+            self.process_track_parts(track_parts_receiver);
+        }
+    }
+
+    fn process_track_parts(&mut self, parts_channel: mpsc::Receiver<TrackPart>) {
+        // TODO resolve collisions
+
+        while let Ok(track_part) = parts_channel.recv() {
+            let occupied_space = match track_part.get_occupied_space() {
+                Ok(os) => os,
+                Err(err) => {
+                    error! {
+                        target: LOG_TARGET,
+                        "unable to get occupied space from the new track part (object id: {}): {}",
+                        track_part.object_id,
+                        err
+                    };
+
+                    continue;
+                }
+            };
+
+            trace! {
+                target: LOG_TARGET,
+                "new occupied space (object id: {}): {}",
+                track_part.object_id,
+                occupied_space
+            }
+
+            // TODO check for collision
+
+            if let Err(err) = self.oss.add_occupied_space(occupied_space) {
+                error! {
+                    target: LOG_TARGET,
+                    "unable to add new occupied space to OccupiedSpacesStorage (object id: {}): {}",
+                    track_part.object_id,
+                    err
+                };
+
+                continue;
+            }
+
+            let object_id = track_part.object_id;
+            if let Err(err) = track_part.add_new_node() {
+                error! {
+                    target: LOG_TARGET,
+                    "unable to add new track node to the object (id: {}): {}", 
+                    object_id, 
+                    err
+                };
+            }
         }
     }
 
@@ -389,16 +440,6 @@ impl Engine {
 
         Ok(())
     }
-
-    // fn place_track_part(
-    //     oss: Arc<OccupiedSpacesStorage>, 
-    //     object: &mut Object4d,
-    //     last_node: Shared<TrackNode>, 
-    //     last_atom: &TrackAtom, 
-    //     next_atom: TrackAtom
-    // ) {
-
-    // }
 
     fn attractors_refs_copy(&self) -> Vec<Shared<Attractor>> {
         self.attractors.values()
@@ -435,4 +476,63 @@ fn compute_acceleration(obj_mass: Mass, location: &Vector, attractors: &Vec<Shar
 pub enum TimeDirection {
     Forward,
     Backward,
+}
+
+struct TrackPart {
+    object_id: ObjectId,
+    object: Shared<Object4d>,
+    last_node: Shared<TrackNode>,
+    add_node: fn(&mut Track, TrackNode),
+    old_atom: TrackAtom,
+    old_time: RelativeTime,
+    new_atom: TrackAtom,
+    new_time: RelativeTime,
+}
+
+impl TrackPart {
+    pub fn new(
+        object_id: ObjectId,
+        object: Shared<Object4d>,
+        last_node: Shared<TrackNode>,
+        add_node: fn(&mut Track, TrackNode),
+        old_atom: TrackAtom, 
+        old_time: RelativeTime,
+        new_atom: TrackAtom,
+        new_time: RelativeTime,
+    ) -> Self {
+        Self {
+            object_id,
+            object, 
+            last_node,
+            add_node,
+            old_atom, 
+            old_time,
+            new_atom,
+            new_time,
+        }
+    }
+
+    pub fn add_new_node(self) -> Result<()> {
+        let mut object = shared_access![mut self.object];
+        let track = object.track_mut();
+
+        (self.add_node)(track, self.new_atom.into());
+
+        Ok(())
+    }
+
+    pub fn get_occupied_space(&self) -> Result<OccupiedSpace> {
+        let object_radius = shared_access![self.object].radius();
+
+        let os = OccupiedSpace::with_track_part(
+            self.object_id, 
+            object_radius, 
+            self.old_atom.location(), 
+            self.old_time, 
+            self.new_atom.location(), 
+            self.new_time
+        );
+
+        Ok(os)
+    }
 }

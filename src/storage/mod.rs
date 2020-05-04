@@ -1,13 +1,16 @@
-use crate::{
-    app, 
-    make_error, 
-    Result,
-    r#type::{
-        ObjectId,
-        Coord,
-        Distance,
-        RelativeTime,
-        Vector,
+use {
+    std::fmt,
+    crate::{
+        app, 
+        make_error, 
+        Result,
+        r#type::{
+            ObjectId,
+            Coord,
+            Distance,
+            RelativeTime,
+            Vector,
+        }
     }
 };
 
@@ -210,7 +213,7 @@ impl OccupiedSpacesStorage {
         Ok(oss)
     } 
 
-    pub fn add_occupied_space(&self, occupied_space: &OccupiedSpace) -> Result<()> {
+    pub fn add_occupied_space(&self, occupied_space: OccupiedSpace) -> Result<()> {
         let mut stmt = self.connection.prepare_cached(include_str![
             "sql/setup/oss/add_occupied_space.sql"
         ]).map_err(|err| make_error![Error::Storage::AddOccupiedSpace(err)])?;
@@ -265,14 +268,14 @@ impl OccupiedSpace {
         let (x_min, x_max) = min_max![x_0, x_1];
         let (y_min, y_max) = min_max![y_0, y_1];
         let (z_min, z_max) = min_max![z_0, z_1];
+        let (t_min, t_max) = min_max![begin_time, end_time];
 
         Self {
             object_id,
             x_min, x_max,
             y_min, y_max,
             z_min, z_max,
-            t_min: begin_time,
-            t_max: end_time,
+            t_min, t_max,
         }
     }
 
@@ -302,4 +305,17 @@ impl OccupiedSpace {
     //         t_min, t_max,
     //     }
     // }
+}
+
+impl fmt::Display for OccupiedSpace {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f, 
+            "x ∈ [{}, {}), y ∈ [{}, {}), z ∈ [{}, {}), t ∈ [{}, {})",
+            self.x_min, self.x_max,
+            self.y_min, self.y_max,
+            self.z_min, self.z_max,
+            self.t_min, self.t_max
+        )
+    }
 }
