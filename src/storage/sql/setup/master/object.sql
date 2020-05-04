@@ -21,10 +21,10 @@ CREATE OR REPLACE FUNCTION {schema_name}.add_object(
     color integer,
     mass real,
     compute_step bigint
-) RETURNS integer 
+) RETURNS bigint 
 AS $$
     DECLARE
-        new_object_id integer;
+        new_object_id bigint;
     BEGIN
         INSERT INTO {schema_name}.object
         VALUES(

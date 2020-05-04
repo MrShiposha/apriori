@@ -63,6 +63,8 @@ pub enum Storage {
     AddObject(postgres::Error),
     RenameObject(postgres::Error),
     ObjectList(postgres::Error),
+    OccupiedSpacesStorageInit(rusqlite::Error),
+    AddOccupiedSpace(rusqlite::Error),
 }
 
 #[derive(Debug)]
@@ -200,6 +202,8 @@ impl fmt::Display for Storage {
             Self::AddObject(err) => write!(f, "unable to add object to the scene: {}", err),
             Self::RenameObject(err) => write!(f, "unable to rename object to the scene: {}", err),
             Self::ObjectList(err) => write!(f, "unable to display object list: {}", err),
+            Self::OccupiedSpacesStorageInit(err) => write!(f, "unable to init OSS: {}", err),
+            Self::AddOccupiedSpace(err) => write!(f, "unable to add occupied space: {}", err),
         }
     }
 }

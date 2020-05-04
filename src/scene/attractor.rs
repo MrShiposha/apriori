@@ -8,16 +8,14 @@ use {
 };
 
 pub struct Attractor {
-    id: AttractorId,
     location: Vector,
     mass: Mass,
     gravity_coeff: GravityCoeff,
 }
 
 impl Attractor {
-    pub fn new(id: AttractorId, location: Vector, mass: Mass, gravity_coeff: GravityCoeff) -> Self {
+    pub fn new(location: Vector, mass: Mass, gravity_coeff: GravityCoeff) -> Self {
         Self {
-            id,
             location,
             mass,
             gravity_coeff,

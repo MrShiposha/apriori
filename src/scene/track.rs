@@ -8,6 +8,8 @@ use {
         r#type::{
             Vector,
             RawTime,
+            RelativeTime,
+            AsRelativeTime
         },
         math::hermite_interpolation,
         scene::{ringbuffer::RingBuffer, Object4d, TruncateRange},
@@ -44,7 +46,7 @@ impl TrackAtom {
         &self.velocity
     }
 
-    pub fn at_next_location(&self, step: f32) -> TrackAtom {
+    pub fn at_next_location(&self, step: RelativeTime) -> TrackAtom {
         TrackAtom {
             location: self.location + self.velocity * step,
             velocity: self.velocity
@@ -278,10 +280,12 @@ impl Track {
     }
 
     /// Compute step relative to 1 second
-    pub fn relative_compute_step(&self) -> f32 {
-        const ONE_SECOND: f32 = 1000.0;
+    pub fn relative_compute_step(&self) -> RelativeTime {
+        self.compute_step.as_relative_time()
+    }
 
-        self.compute_step.num_milliseconds() as f32 / ONE_SECOND
+    pub fn compute_step(&self) -> &chrono::Duration {
+        &self.compute_step
     }
 
     pub fn computed_range(&self) -> Range<chrono::Duration> {
@@ -296,6 +300,7 @@ impl Track {
     }
 
     pub fn time_end(&self) -> chrono::Duration {
+        // TODO: take into account composite nodes
         self.time_start + self.compute_step * (self.nodes.len() - 1) as i32
     }
 
@@ -364,16 +369,14 @@ fn interpolate_track_part(
     rhs: SpaceTimeAtom,
     vtime: &chrono::Duration,
 ) -> Vector {
-    const ONE_SECOND: f32 = 1000.0;
-
     hermite_interpolation(
         &lhs.track_atom.location,
         &lhs.track_atom.velocity,
-        lhs.time.num_milliseconds() as f32 / ONE_SECOND,
+        lhs.time.as_relative_time(),
         
         &rhs.track_atom.location,
         &rhs.track_atom.velocity,
-        rhs.time.num_milliseconds() as f32 / ONE_SECOND,
-        vtime.num_milliseconds() as f32 / ONE_SECOND
+        rhs.time.as_relative_time(),
+        vtime.as_relative_time(),
     )
 }

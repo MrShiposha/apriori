@@ -1,16 +1,16 @@
 use crate::{
     r#type::{
-        Color, 
-        ObjectId,
+        ObjectName,
+        Mass,
         Distance,
-        Mass
+        Color, 
     },
     scene::track::Track,
 };
 
 pub struct Object4d {
-    id: ObjectId,
     track: Track,
+    name: ObjectName,
     mass: Mass,
     radius: Distance,
     color: Color,
@@ -19,15 +19,16 @@ pub struct Object4d {
 
 impl Object4d {
     pub fn new(
-        id: ObjectId,
-        track: Track,
+        track_size: usize,
+        compute_step: chrono::Duration,
+        name: ObjectName,
         mass: Mass,
         radius: Distance,
         color: Color,
     ) -> Self {
         Self {
-            id,
-            track,
+            track: Track::new(track_size, compute_step),
+            name,
             mass,
             radius,
             color,
@@ -35,12 +36,16 @@ impl Object4d {
         }
     }
 
-    pub fn id(&self) -> ObjectId {
-        self.id
+    pub fn name(&self) -> &ObjectName {
+        &self.name
     }
 
     pub fn mass(&self) -> Mass {
         self.mass
+    }
+
+    pub fn radius(&self) -> Distance {
+        self.radius
     }
 
     pub fn color(&self) -> &Color {

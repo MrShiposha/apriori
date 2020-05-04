@@ -11,20 +11,35 @@ pub type PackedColor = i32;
 pub type Distance = f32;
 pub type Mass = f32;
 pub type RawTime = i64;
+
+/// Time relative to one second
+pub type RelativeTime = f32;
 pub type GravityCoeff = f32;
 
 pub type SessionName = String;
 pub type SessionId = i32;
 pub type ObjectName = String;
-pub type ObjectId = i32;
+pub type ObjectId = i64;
 pub type AttractorName = String;
-pub type AttractorId = i32;
+pub type AttractorId = i64;
 
 const DAYS_IN_WEEK: RawTime = 7;
 const HOURS_IN_DAY: RawTime = 24;
 const MINS_IN_HOUR: RawTime = 60;
 const SECS_IN_MIN: RawTime = 60;
 const MILLIS_IN_SEC: RawTime = 1000;
+
+pub trait AsRelativeTime {
+    fn as_relative_time(&self) -> RelativeTime;
+}
+
+impl AsRelativeTime for chrono::Duration {
+    fn as_relative_time(&self) -> RelativeTime {
+        const ONE_SECOND: RelativeTime = 1000.0;
+
+        self.num_milliseconds() as RelativeTime / ONE_SECOND
+    }
+}
 
 pub enum TimeFormat {
     VirtualTimeLong(chrono::Duration),

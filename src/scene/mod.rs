@@ -6,7 +6,7 @@ use {
         },
         sync::{
             Arc,
-            Mutex,
+            RwLock,
         },
         ops::{
             RangeFrom,
@@ -17,7 +17,7 @@ use {
         scene::SceneNode,
     },
     log::{
-        info,
+        error,
     },
     crate::{
         Result,
@@ -40,9 +40,10 @@ use {
         storage,
         r#type::{
             SessionId,
-            AttractorName,
-            AttractorId,
+            ObjectId,
             ObjectName,
+            AttractorId,
+            AttractorName,
             Vector,
             TimeFormat
         },
@@ -58,11 +59,11 @@ pub mod physics;
 pub use object::Object4d;
 pub use attractor::Attractor;
 
-const LOG_TARGET: &'static str = "Scene";
+const LOG_TARGET: &'static str = "scene";
 
 pub struct SceneManager {
-    objects: HashMap<ObjectName, (Arc<Mutex<Object4d>>, SceneNode)>,
-    attractors: HashMap<AttractorName, Arc<Attractor>>,
+    objects: HashMap<ObjectName, (Arc<RwLock<Object4d>>, SceneNode)>,
+    attractors: HashMap<AttractorName, Arc<RwLock<Attractor>>>,
     scene: SceneNode,
 }
 
@@ -76,13 +77,14 @@ impl SceneManager {
     }
 
     pub fn add_object(
-        &mut self, 
+        &mut self,
+        storage: storage::Object<'_>,
         session_id: SessionId,
-        mut storage: storage::Object<'_>,
-        msg: &AddObject, 
-        default_name: &ObjectName,
+        engine: &mut Engine,
+        msg: AddObject,
+        default_name: ObjectName,
     ) -> Result<()> {
-        let obj_name = msg.name.as_ref().unwrap_or(default_name);
+        let obj_name = msg.name.unwrap_or(default_name);
 
         match self.objects.entry(obj_name.clone()) {
             Entry::Occupied(_) => Err(make_error![Error::Scene::ObjectAlreadyExists(obj_name.clone())]),
@@ -93,49 +95,50 @@ impl SceneManager {
                 node.set_color(color[0], color[1], color[2]);
                 node.set_local_translation(msg.location.into());
 
-                let mut track = Track::new(msg.track_size, msg.step);
-                let object_mass = msg.mass;
-
-                let attractors = Self::attractors_refs_copy(&self.attractors);
-                let mut atom = TrackAtom::with_location(msg.location.clone());
-                Engine::make_new_atom(
-                    object_mass,
-                    &mut atom,
-                    track.relative_compute_step(), 
-                    attractors
-                )?;
-
-                track.push_back(atom.into());
-
-                let object_id = storage.add(session_id, msg, default_name)?;
-
                 let object = Object4d::new(
-                    object_id, 
-                    track,
+                    msg.track_size,
+                    msg.step,
+                    obj_name,
                     msg.mass,
                     msg.radius,
                     color
                 );
 
-                entry.insert((Arc::new(Mutex::new(object)), node));
+                let object = engine.add_object(
+                    storage, 
+                    session_id, 
+                    object, 
+                    msg.step, 
+                    msg.location,
+                )?;
+
+                entry.insert((object, node));
                 Ok(())
             }
         }
     }
 
-    pub fn add_attractor(&mut self, attractor_id: AttractorId, msg: &AddAttractor, default_name: &AttractorName) -> Result<()> {
-        let attr_name = msg.name.as_ref().unwrap_or(default_name);
+    pub fn add_attractor(
+        &mut self, 
+        storage: storage::Attractor<'_>,
+        session_id: SessionId,
+        engine: &mut Engine,
+        msg: AddAttractor, 
+        default_name: AttractorName
+    ) -> Result<()> {
+        let attractor_name = msg.name.unwrap_or(default_name);
 
-        match self.attractors.entry(attr_name.clone()) {
-            Entry::Occupied(_) => Err(make_error![Error::Scene::AttractorAlreadyExists(attr_name.clone())]),
+        match self.attractors.entry(attractor_name.clone()) {
+            Entry::Occupied(_) => Err(make_error![Error::Scene::AttractorAlreadyExists(attractor_name.clone())]),
             Entry::Vacant(entry) => {
                 let mut node = self.scene.add_cube(0.5, 0.5, 0.5);
                 node.set_color(1.0, 0.0, 0.0);
                 node.set_local_translation(msg.location.into());
 
-                let attractor = Attractor::new(attractor_id, msg.location, msg.mass, msg.gravity_coeff);
+                let attractor = Attractor::new(msg.location, msg.mass, msg.gravity_coeff);
+                let id = engine.add_attractor(storage, session_id, attractor, attractor_name)?;
 
-                entry.insert(Arc::new(attractor));
+                entry.insert(id);
                 Ok(())
             }
         }
@@ -143,63 +146,29 @@ impl SceneManager {
 
     pub fn query_objects_by_time<F: FnMut(&str, &Object4d, Vector)>(
         &mut self, 
-        vtime: &chrono::Duration, 
         engine: &mut Engine,
+        vtime: &chrono::Duration, 
         mut object_handler: F
     ) {
-        let objects = self.objects.iter_mut().map(|(name, (obj, node))| (name, obj, node));
-        Self::update_objects_locations(
-            objects,
-            Self::attractors_refs_copy(&self.attractors),
-            engine,
-            vtime, 
-            &mut object_handler
-        );
-
-        // if !uncomputed_objects.is_empty() {
-        //     engine.compute(
-        //         uncomputed_objects.iter()
-        //             .map(|(_, object, _)| Arc::clone(*object))
-        //             .collect(),
-
-        //         Self::attractors_refs_copy(&self.attractors)
-        //     );
-
-        //     let computed_objects = uncomputed_objects.into_iter();
-        //     Self::update_objects_locations(
-        //         computed_objects,
-        //         engine, 
-        //         vtime, 
-        //         &mut object_handler
-        //     );
-        // }
-    }
-
-    fn update_objects_locations<'a, I, F>(
-        objects: I,
-        attractors: Vec<Arc<Attractor>>,
-        engine: &mut Engine,
-        vtime: &chrono::Duration, 
-        object_handler: &mut F
-    )
-    where 
-        I: Iterator<Item=(&'a ObjectName, &'a mut Arc<Mutex<Object4d>>, &'a mut SceneNode)>,
-        F: FnMut(&str, &Object4d, Vector)
-    {
-        let mut objects = objects.collect::<Vec<_>>();
-
-        engine.update_objects(
-            vtime, 
-            objects.iter().map(|(_, object, _)| Arc::clone(object)).collect(), 
-            attractors,
-        );
-
-        for (name, object, node) in objects.iter_mut() {
-            let sync_object = object.lock().unwrap();
-
-            let obj_location = sync_object.track().interpolate(vtime).unwrap();
-            node.set_local_translation(obj_location.into());
-            object_handler(name.as_str(), &*sync_object, obj_location);
+        match engine.update_objects(vtime) {
+            Ok(()) => for (name, (object, node)) in self.objects.iter_mut() {
+                let sync_object = object.read().unwrap();
+    
+                match sync_object.track().interpolate(vtime) {
+                    Ok(obj_location) => {
+                        node.set_local_translation(obj_location.into());
+                        object_handler(name.as_str(), &*sync_object, obj_location);
+                    },
+                    Err(err) => error! {
+                        target: LOG_TARGET,
+                        "unable to interpolate object `{}`: {}", name, err
+                    }
+                }
+            },
+            Err(err) => error! {
+                target: LOG_TARGET,
+                "unable to update objects on the scene: {}", err
+            }
         }
     }
 

@@ -1,7 +1,7 @@
 use crate::{
     graphics,
-    message::AddObject,
-    r#type::{ObjectId, ObjectName, SessionId},
+    scene::Object4d,
+    r#type::{SessionId, ObjectId},
     storage_map_err, Result,
 };
 
@@ -17,24 +17,19 @@ impl<'storage> Object<'storage> {
     pub fn add(
         &mut self,
         session_id: SessionId,
-        add_msg: &AddObject,
-        default_name: &ObjectName,
+        object: &Object4d,
     ) -> Result<ObjectId> {
-        let name = add_msg.name.as_ref().unwrap_or(default_name);
-
-        let color = add_msg.color.unwrap_or(graphics::random_color());
-
         self.manager
             .psql
             .query_one(
                 &self.manager.add_object,
                 &[
                     &session_id,
-                    name,
-                    &add_msg.radius,
-                    &graphics::pack_color(&color),
-                    &add_msg.mass,
-                    &add_msg.step.num_milliseconds(),
+                    object.name(),
+                    &object.radius(),
+                    &graphics::pack_color(object.color()),
+                    &object.mass(),
+                    &object.track().compute_step().num_milliseconds(),
                 ],
             )
             .map(|row| row.get(0))

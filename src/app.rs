@@ -349,9 +349,15 @@ impl App {
         self.object_index += 1;
 
         let default_name = format!("object-{}", object_index);
-
         let object_storage = self.storage_mgr.object();
-        self.scene_mgr.add_object(self.session_id, object_storage, &msg, &default_name)?;
+
+        self.scene_mgr.add_object(
+            object_storage, 
+            self.session_id, 
+            &mut self.engine, 
+            msg, 
+            default_name
+        )?;
 
         Ok(())
     }
@@ -361,17 +367,15 @@ impl App {
         self.attractor_index += 1;
 
         let default_name = format!("attractor-{}", attractor_index);
+        let attractor_storage = self.storage_mgr.attractor();
 
-        let attractor_id = self
-            .storage_mgr
-            .attractor()
-            .add(
-                self.session_id,
-                &msg,
-                &default_name
-            )?;
-
-        self.scene_mgr.add_attractor(attractor_id, &msg, &default_name)?;
+        self.scene_mgr.add_attractor(
+            attractor_storage, 
+            self.session_id, 
+            &mut self.engine,
+            msg, 
+            default_name
+        )?;
 
         Ok(())
     }
@@ -494,8 +498,8 @@ impl App {
 
     fn simulate_frame(&mut self) {
         self.scene_mgr.query_objects_by_time(
-            &self.virtual_time, 
             &mut self.engine, 
+            &self.virtual_time, 
             {
                 let is_names_displayed = self.is_names_displayed;
                 let window = &mut self.window;

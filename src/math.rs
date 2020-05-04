@@ -1,13 +1,16 @@
-use super::r#type::Vector;
+use super::r#type::{
+    Vector,
+    RelativeTime
+};
 
 pub fn hermite_interpolation(
     location_0: &Vector,
     velocity_0: &Vector,
-    time_0: f32,
+    time_0: RelativeTime,
     location_1: &Vector,
     velocity_1: &Vector,
-    time_1: f32,
-    interest_time: f32
+    time_1: RelativeTime,
+    interest_time: RelativeTime
 ) -> Vector {
     let step = time_1 - time_0;
     let t = (interest_time - time_0) / step;

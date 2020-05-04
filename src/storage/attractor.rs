@@ -1,6 +1,5 @@
 use crate::{
-    message::AddAttractor,
-    r#type::{SessionId, AttractorId},
+    r#type::{SessionId, AttractorId, AttractorName},
     storage_map_err, Result,
 };
 
@@ -16,12 +15,10 @@ impl<'storage> Attractor<'storage> {
     pub fn add(
         &mut self,
         session_id: SessionId,
-        add_msg: &AddAttractor,
-        default_name: &String,
+        attractor: &crate::scene::Attractor,
+        attractor_name: &AttractorName,
     ) -> Result<AttractorId> {
-        let name = add_msg.name.as_ref().unwrap_or(default_name);
-
-        let location = &add_msg.location;
+        let location = attractor.location();
 
         self.manager
             .psql
@@ -29,9 +26,9 @@ impl<'storage> Attractor<'storage> {
                 &self.manager.add_attractor,
                 &[
                     &session_id,
-                    name,
-                    &add_msg.mass,
-                    &add_msg.gravity_coeff,
+                    attractor_name,
+                    &attractor.mass(),
+                    &attractor.gravity_coeff(),
                     &location[0],
                     &location[1],
                     &location[2],

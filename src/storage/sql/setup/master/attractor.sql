@@ -23,10 +23,10 @@ CREATE OR REPLACE FUNCTION {schema_name}.add_attractor(
     location_x real,
     location_y real,
     location_z real
-) RETURNS integer 
+) RETURNS bigint 
 AS $$
     DECLARE
-        new_attractor_id integer;
+        new_attractor_id bigint;
     BEGIN
         INSERT INTO {schema_name}.attractor
         VALUES(

@@ -1,4 +1,15 @@
-use super::{app, make_error, Result};
+use crate::{
+    app, 
+    make_error, 
+    Result,
+    r#type::{
+        ObjectId,
+        Coord,
+        Distance,
+        RelativeTime,
+        Vector,
+    }
+};
 
 pub mod session;
 pub mod object;
@@ -150,15 +161,15 @@ impl StorageManager {
                 {attractor}
                 {session_triggers}
             "#,
-            schema = query![include_str!("sql/setup/schema.sql")],
+            schema = query![include_str!("sql/setup/master/schema.sql")],
             session = query! {
-                include_str!("sql/setup/session.sql"),
+                include_str!("sql/setup/master/session.sql"),
                 session_max_hang_time = app::SESSION_MAX_HANG_TIME.num_seconds()
             },
-            object = query![include_str!["sql/setup/object.sql"]],
-            location = query![include_str!["sql/setup/location.sql"]],
-            attractor = query![include_str!["sql/setup/attractor.sql"]],
-            session_triggers = query![include_str!("sql/setup/session_triggers.sql")]
+            object = query![include_str!["sql/setup/master/object.sql"]],
+            location = query![include_str!["sql/setup/master/location.sql"]],
+            attractor = query![include_str!["sql/setup/master/attractor.sql"]],
+            session_triggers = query![include_str!("sql/setup/master/session_triggers.sql")]
         };
 
         psql.batch_execute(setup_query.as_str())
@@ -176,4 +187,119 @@ impl StorageManager {
     pub fn attractor(&mut self) -> Attractor {
         Attractor::new_api(self)
     }
+}
+
+pub struct OccupiedSpacesStorage {
+    connection: rusqlite::Connection
+}
+
+impl OccupiedSpacesStorage {
+    pub fn new() -> Result<Self> {
+        let connection = rusqlite::Connection::open_in_memory()
+            .map_err(|err| make_error![Error::Storage::OccupiedSpacesStorageInit(err)])?;
+
+        connection.execute(
+            include_str!["sql/setup/oss/occupied_space.sql"],
+            rusqlite::NO_PARAMS
+        ).map_err(|err| make_error![Error::Storage::OccupiedSpacesStorageInit(err)])?;
+
+        let oss = Self {
+            connection
+        };
+
+        Ok(oss)
+    } 
+
+    pub fn add_occupied_space(&self, occupied_space: &OccupiedSpace) -> Result<()> {
+        let mut stmt = self.connection.prepare_cached(include_str![
+            "sql/setup/oss/add_occupied_space.sql"
+        ]).map_err(|err| make_error![Error::Storage::AddOccupiedSpace(err)])?;
+
+        stmt.execute(rusqlite::params![
+            occupied_space.x_min as f64, occupied_space.x_max as f64,
+            occupied_space.y_min as f64, occupied_space.y_max as f64,
+            occupied_space.z_min as f64, occupied_space.z_max as f64,
+            occupied_space.t_min as f64, occupied_space.t_max as f64,
+            occupied_space.object_id
+
+        ]).map_err(|err| make_error![Error::Storage::AddOccupiedSpace(err)])?;
+
+        Ok(())
+    }
+}
+
+pub struct OccupiedSpace {
+    object_id: ObjectId,
+    x_min: Coord, x_max: Coord,
+    y_min: Coord, y_max: Coord,
+    z_min: Coord, z_max: Coord,
+    t_min: Coord, t_max: Coord,
+}
+
+impl OccupiedSpace {
+    pub fn with_track_part(
+        object_id: ObjectId,
+        object_radius: Distance, 
+        begin_location: &Vector, 
+        begin_time: RelativeTime,
+        end_location: &Vector,
+        end_time: RelativeTime,
+    ) -> Self {
+        macro_rules! min_max {
+            ($a:expr, $b:expr) => {
+                (
+                    $a.min($b) - object_radius,
+                    $a.max($b) + object_radius,
+                )
+            };
+        }
+
+        let x_0 = begin_location[0];
+        let y_0 = begin_location[1];
+        let z_0 = begin_location[2];
+
+        let x_1 = end_location[0];
+        let y_1 = end_location[1];
+        let z_1 = end_location[2];
+
+        let (x_min, x_max) = min_max![x_0, x_1];
+        let (y_min, y_max) = min_max![y_0, y_1];
+        let (z_min, z_max) = min_max![z_0, z_1];
+
+        Self {
+            object_id,
+            x_min, x_max,
+            y_min, y_max,
+            z_min, z_max,
+            t_min: begin_time,
+            t_max: end_time,
+        }
+    }
+
+    // pub fn with_location(
+    //     object_id: ObjectId, 
+    //     object_radius: Distance, 
+    //     location: Vector,
+    //     time: RelativeTime,
+    // ) -> Self {
+    //     let x_min = location[0] - object_radius;
+    //     let x_max = location[0] + object_radius;
+
+    //     let y_min = location[1] - object_radius;
+    //     let y_max = location[1] + object_radius;
+
+    //     let z_min = location[2] - object_radius;
+    //     let z_max = location[2] + object_radius;
+        
+    //     let t_min = time;
+    //     let t_max = t_min;
+
+    //     Self {
+    //         object_id,
+    //         x_min, x_max,
+    //         y_min, y_max,
+    //         z_min, z_max,
+    //         t_min, t_max,
+    //     }
+    // }
 }
