@@ -4,10 +4,6 @@ use {
             HashMap,
             hash_map::Entry,
         },
-        sync::{
-            Arc,
-            RwLock,
-        },
         ops::{
             RangeFrom,
             RangeTo
@@ -22,12 +18,14 @@ use {
     crate::{
         Result,
         make_error,
+        shared_access,
         message::{
             AddAttractor,
             AddObject,
         },
         graphics::random_color,
         scene::physics::Engine,
+        shared::Shared,
         r#type::{
             ObjectId,
             ObjectName,
@@ -49,8 +47,8 @@ pub use attractor::Attractor;
 const LOG_TARGET: &'static str = "scene";
 
 pub struct SceneManager {
-    objects: HashMap<ObjectName, (ObjectId, Arc<RwLock<Object4d>>, SceneNode)>,
-    attractors: HashMap<AttractorName, Arc<RwLock<Attractor>>>,
+    objects: HashMap<ObjectName, (ObjectId, Shared<Object4d>, SceneNode)>,
+    attractors: HashMap<AttractorName, Shared<Attractor>>,
     scene: SceneNode,
 }
 
@@ -117,9 +115,9 @@ impl SceneManager {
                 node.set_local_translation(msg.location.into());
 
                 let attractor = Attractor::new(msg.location, msg.mass, msg.gravity_coeff);
-                let id = engine.add_attractor(attractor, attractor_name)?;
+                let attractor = engine.add_attractor(attractor, attractor_name)?;
 
-                entry.insert(id);
+                entry.insert(attractor);
                 Ok(())
             }
         }
@@ -133,7 +131,7 @@ impl SceneManager {
     ) {
         match engine.update_objects(vtime) {
             Ok(()) => for (name, (_id, object, node)) in self.objects.iter_mut() {
-                let sync_object = object.read().unwrap();
+                let sync_object = shared_access![object];
     
                 match sync_object.track().interpolate(vtime) {
                     Ok(obj_location) => {
@@ -142,7 +140,7 @@ impl SceneManager {
                     },
                     Err(err) => error! {
                         target: LOG_TARGET,
-                        "unable to interpolate object `{}`: {}", name, err
+                        "unable to interpolate the object `{}`: {}", name, err
                     }
                 }
             },
@@ -163,17 +161,27 @@ impl SceneManager {
             return Ok(());
         }
 
+        if self.objects.contains_key(&new_name) {
+            return Err(make_error![Error::Scene::ObjectAlreadyExists(new_name)]);
+        }
+
         let (id, object, node) = self.objects.remove(&old_name)
             .ok_or(make_error![Error::Scene::ObjectNotFound(old_name.clone())])?;
         
+        let mut sync_object = shared_access![mut object];
+        
         match engine.rename_object_in_master_storage(id, new_name.as_str()) {
             Ok(()) => {
-                object.write().unwrap().rename(new_name.clone());
+                sync_object.rename(new_name.clone());
+                std::mem::drop(sync_object);
+
                 self.objects.insert(new_name, (id, object, node));
 
                 Ok(())
             }
             Err(err) => {
+                std::mem::drop(sync_object);
+
                 self.objects.insert(old_name, (id, object, node));
 
                 Err(err)

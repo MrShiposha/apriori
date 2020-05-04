@@ -8,9 +8,11 @@ use {
     log::{
         trace,
         info,
+        error,
     },
     crate::{
         make_error, 
+        shared_access,
         scene::{
             Object4d,
             Attractor,
@@ -49,8 +51,8 @@ const LOG_TARGET: &'static str = "physics";
 const STORAGE_CONNECTION_STRING: &'static str = "host=localhost user=postgres";
 
 pub struct Engine {
-    objects: HashMap<ObjectId, Arc<RwLock<Object4d>>>,
-    attractors: HashMap<AttractorId, Arc<RwLock<Attractor>>>,
+    objects: HashMap<ObjectId, Shared<Object4d>>,
+    attractors: HashMap<AttractorId, Shared<Attractor>>,
     master_storage: StorageManager,
     oss: OccupiedSpacesStorage,
     session_id: SessionId,
@@ -107,15 +109,15 @@ impl Engine {
         &mut self, 
         attractor: Attractor,
         attractor_name: AttractorName
-    ) -> Result<Arc<RwLock<Attractor>>> {
+    ) -> Result<Shared<Attractor>> {
         let id = self.master_storage.attractor().add(
             self.session_id, 
             &attractor, 
             &attractor_name
         )?;
 
-        let attractor = Arc::new(RwLock::new(attractor));
-        self.attractors.insert(id, Arc::clone(&attractor));
+        let attractor = Shared::from(attractor);
+        self.attractors.insert(id, attractor.share());
         
         Ok(attractor)
     }
@@ -125,13 +127,13 @@ impl Engine {
         mut object: Object4d,
         step: chrono::Duration,
         initial_location: Vector,
-    ) -> Result<(ObjectId, Arc<RwLock<Object4d>>)> {
+    ) -> Result<(ObjectId, Shared<Object4d>)> {
         // TODO assert there is no collisions
 
         let mut atom = TrackAtom::with_location(initial_location);
 
         let attractors = self.attractors_refs_copy();
-        Self::atom_set_velocity(object.mass(), &mut atom, step.as_relative_time(), attractors);
+        Self::atom_set_velocity(object.mass(), &mut atom, step.as_relative_time(), attractors)?;
         object.track_mut().push_back(atom.into());
 
         let id = self.master_storage.object().add(
@@ -139,8 +141,8 @@ impl Engine {
             &object,
         )?;
 
-        let object = Arc::new(RwLock::new(object));
-        self.objects.insert(id, Arc::clone(&object));
+        let object = Shared::from(object);
+        self.objects.insert(id, object.share());
 
         Ok((id, object))
     }
@@ -226,12 +228,12 @@ impl Engine {
 
         for (id, object) in self.objects.iter() {
             let rt = self.track_relative_time(
-                &*object.read().unwrap(), 
+                &*shared_access![object], 
                 vtime
             );
 
             if rt.is_nan() || rt < self.lower_update_time_threshold() || rt > self.upper_update_time_threshold() {
-                let mut sync_object = object.write().unwrap();
+                let mut sync_object = shared_access![mut object];
                 let track = sync_object.track_mut();
                 let half_computed_time = track.time_start() + (track.time_end() - track.time_start()) / 2;
 
@@ -248,7 +250,7 @@ impl Engine {
                 }
 
                 std::mem::drop(sync_object);
-                uncomputed_objects.push((*id, Arc::clone(object)));
+                uncomputed_objects.push((*id, object.share()));
             }
         }
 
@@ -265,8 +267,8 @@ impl Engine {
     fn compute(
         &mut self, 
         compute_time_direction: TimeDirection,
-        mut objects: Vec<(ObjectId, Arc<RwLock<Object4d>>)>,
-        attractors: Vec<Arc<RwLock<Attractor>>>,
+        mut objects: Vec<(ObjectId, Shared<Object4d>)>,
+        attractors: Vec<Shared<Attractor>>,
     ) {
         // TODO compute collisions after each step
 
@@ -306,54 +308,71 @@ impl Engine {
 
         while !objects.is_empty() {
             while let Some((obj_id, object)) = objects.pop() {
-                let sync_object = object.read().unwrap();
+                let sync_object = shared_access![object];
                 if !sync_object.track().is_fully_computed() {
-                    remaining.push((obj_id, Arc::clone(&object)));
+                    remaining.push((obj_id, object.share()));
 
-                    let object = Arc::clone(&object);
+                    let object = object.share();
                     let attractors = attractors.clone();
                     self.compute_pool.execute(move || {
-                        let mut sync_object = object.write().unwrap();
+                        let mut sync_object = shared_access![mut object];
                         let obj_mass = sync_object.mass();
                         let obj_radius = sync_object.radius();
 
                         let track = sync_object.track_mut();
 
                         let node = last_node(track);
-                        let node = node.read().unwrap();
+                        let sync_node = shared_access![node];
+
 
                         let time = last_time(track);
                         let new_time = new_time(track, time);
 
-                        let atom = last_atom(&*node);
+                        let atom = last_atom(&sync_node);
+
                         let step = match compute_time_direction { 
                             TimeDirection::Forward => track.relative_compute_step(),
                             TimeDirection::Backward => -track.relative_compute_step(),
                         };
 
+                        // std::mem::drop(track);
+
                         let mut new_atom = atom.at_next_location(step);
 
+                        // self.place_track_part(
+                        //     &mut *sync_object, 
+                        //     node.share(), 
+                        //     atom, 
+                        //     new_atom
+                        // );
+
                         // TODO: Check collisions
-                        let new_occupied_space = OccupiedSpace::with_track_part(
-                            obj_id, 
-                            obj_radius, 
-                            atom.location(), 
-                            time, 
-                            new_atom.location(), 
-                            new_time
-                        );
+                        // let new_occupied_space = OccupiedSpace::with_track_part(
+                        //     obj_id, 
+                        //     obj_radius, 
+                        //     atom.location(), 
+                        //     time, 
+                        //     new_atom.location(), 
+                        //     new_time
+                        // );
 
                         // self.oss.add_occupied_space(new_occupied_space)
                         //     .map_err(|err| make_error![Error::Storage::AddOccupiedSpace(err)])?;
 
-                        Self::atom_set_velocity(
+                        match Self::atom_set_velocity(
                             obj_mass, 
                             &mut new_atom, 
                             step, 
                             attractors
-                        );
-
-                        add_node(track, new_atom.into());
+                        ) {
+                            Ok(()) => add_node(track, new_atom.into()),
+                            Err(err) => error! {
+                                target: LOG_TARGET,
+                                "unable to add new track node to the object `{}`: {}", 
+                                shared_access![object].name(),
+                                err
+                            }
+                        }
                     });
                 }
             }
@@ -363,23 +382,35 @@ impl Engine {
         }
     }
 
-    fn atom_set_velocity(obj_mass: Mass, atom: &mut TrackAtom, step: RelativeTime, attractors: Vec<Arc<RwLock<Attractor>>>) {
-        let mut acceleration = compute_acceleration(obj_mass, atom.location(), &attractors);
+    fn atom_set_velocity(obj_mass: Mass, atom: &mut TrackAtom, step: RelativeTime, attractors: Vec<Shared<Attractor>>) -> Result<()> {
+        let mut acceleration = compute_acceleration(obj_mass, atom.location(), &attractors)?;
         acceleration.scale_mut(step);
         atom.set_velocity(atom.velocity() + acceleration);
+
+        Ok(())
     }
 
-    fn attractors_refs_copy(&self) -> Vec<Arc<RwLock<Attractor>>> {
+    // fn place_track_part(
+    //     oss: Arc<OccupiedSpacesStorage>, 
+    //     object: &mut Object4d,
+    //     last_node: Shared<TrackNode>, 
+    //     last_atom: &TrackAtom, 
+    //     next_atom: TrackAtom
+    // ) {
+
+    // }
+
+    fn attractors_refs_copy(&self) -> Vec<Shared<Attractor>> {
         self.attractors.values()
-            .map(|attr| Arc::clone(attr))
+            .map(|attr| attr.share())
             .collect()
     }
 }
 
-fn compute_acceleration(obj_mass: Mass, location: &Vector, attractors: &Vec<Arc<RwLock<Attractor>>>) -> Vector {
+fn compute_acceleration(obj_mass: Mass, location: &Vector, attractors: &Vec<Shared<Attractor>>) -> Result<Vector> {
     let mut acceleration = Vector::zeros();
     for attractor in attractors.iter() {
-        let attractor = attractor.read().unwrap();
+        let attractor = shared_access![attractor];
 
         let mut dir = attractor.location() - *location;
         let distance = dir.norm();
@@ -397,7 +428,7 @@ fn compute_acceleration(obj_mass: Mass, location: &Vector, attractors: &Vec<Arc<
         acceleration += attr_acceleration;
     }
 
-    acceleration
+    Ok(acceleration)
 }
 
 #[derive(Clone, Copy)]
