@@ -71,6 +71,7 @@ pub enum Storage {
 pub enum Scene {
     UncomputedTrackPart(chrono::Duration),
     ObjectAlreadyExists(ObjectName),
+    ObjectNotFound(ObjectName),
     AttractorAlreadyExists(AttractorName),
 }
 
@@ -224,6 +225,9 @@ impl fmt::Display for Scene {
             ),
             Self::ObjectAlreadyExists(obj_name) => {
                 write!(f, "`{}`: object already exists", obj_name)
+            },
+            Self::ObjectNotFound(obj_name) => {
+                write!(f, "`{}`: object not found", obj_name)
             },
             Self::AttractorAlreadyExists(attr_name) => {
                 write!(f, "`{}`: attractor already exists", attr_name)

@@ -87,7 +87,7 @@ impl<'storage> Session<'storage> {
         Ok(())
     }
 
-    pub fn get(&mut self, id: SessionId) -> Result<()> {
+    pub fn print_current_name(&mut self, id: SessionId) -> Result<()> {
         let row = self
             .manager
             .psql

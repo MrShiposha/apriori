@@ -1,10 +1,9 @@
 use super::{
     cli, graphics,
     message::{self, Message},
-    r#type::{Color, RawTime, SessionId, TimeFormat, TimeUnit},
+    r#type::{Color, RawTime, TimeFormat, TimeUnit},
     scene::{physics::Engine, SceneManager},
     shared_access,
-    storage::StorageManager,
     Error, Result, Shared,
 };
 use kiss3d::{
@@ -19,7 +18,7 @@ use kiss3d::{
     window::{CanvasSetup, NumSamples, Window},
 };
 use lazy_static::lazy_static;
-use log::{error, info, trace};
+use log::{info, error};
 use nalgebra::{Point2, Point3, Vector2};
 use std::{
     fmt::{self, Write},
@@ -33,8 +32,6 @@ pub const APP_NAME: &'static str = "apriori";
 
 const CLOSE_MESSAGE: &'static str =
     "Simulation is completed.\nTo close the application, run `shutdown` message.";
-
-const STORAGE_CONNECTION_STRING: &'static str = "host=localhost user=postgres";
 
 lazy_static! {
     pub static ref APP_CLI_PROMPT: String = format!("{}> ", APP_NAME);
@@ -92,10 +89,8 @@ pub struct App {
     is_stats_enabled: bool,
     frame_deltas_ms_sum: usize,
     frame_count: usize,
-    storage_mgr: StorageManager,
     scene_mgr: SceneManager,
     engine: Engine,
-    session_id: SessionId,
     object_index: usize,
     attractor_index: usize,
     is_names_displayed: bool,
@@ -104,15 +99,6 @@ pub struct App {
 impl App {
     pub fn new(log_filter: log::LevelFilter) -> Self {
         super::logger::Logger::init(log_filter).expect("unable to initialize logging system");
-
-        let mut storage_mgr =
-            StorageManager::setup(STORAGE_CONNECTION_STRING).expect("unable to connect to storage");
-
-        let default_name = None;
-        let session_id = storage_mgr
-            .session()
-            .new(default_name)
-            .expect("unable to create new session");
 
         let mut window = Window::new_with_setup(
             APP_NAME,
@@ -145,10 +131,8 @@ impl App {
             is_stats_enabled: true,
             frame_deltas_ms_sum: 0,
             frame_count: 0,
-            storage_mgr,
             scene_mgr: SceneManager::new(scene),
-            engine: Engine::new().expect("physics engine initialization"),
-            session_id,
+            engine: Engine::new().expect("unable to initialize physics engine"),
             object_index: 0,
             attractor_index: 0,
             is_names_displayed: false,
@@ -284,24 +268,19 @@ impl App {
             }
             Message::ListSessions(_) => {
                 println!("\n\t-- sessions list --");
-                self.storage_mgr.session().print_list()
+                self.engine.print_session_list()
             }
-            Message::GetSession(_) => self.storage_mgr.session().get(self.session_id),
-            Message::NewSession(msg) => self.handle_new_session(msg),
-            Message::SaveSession(msg) => {
-                self.storage_mgr.session().save(self.session_id, &msg.name)
-            }
-            Message::LoadSession(msg) => self.handle_load_session(msg),
-            Message::RenameSession(msg) => self
-                .storage_mgr
-                .session()
-                .rename(&msg.old_name, &msg.new_name),
-            Message::DeleteSession(msg) => self.storage_mgr.session().delete(&msg.name),
+            Message::GetSession(_) => self.engine.print_current_session_name(),
+            Message::NewSession(msg) => self.engine.new_session(msg.name),
+            Message::SaveSession(msg) => self.engine.save_current_session(msg.name),
+            Message::LoadSession(msg) => self.engine.load_session(msg.name),
+            Message::RenameSession(msg) => self.engine.rename_session(&msg.old_name, &msg.new_name),
+            Message::DeleteSession(msg) => self.engine.delete_session(&msg.name),
             Message::AddObject(msg) if state.is_run() => self.handle_add_object(msg),
             Message::RenameObject(msg) if state.is_run() => self.handle_rename_object(msg),
             Message::ListObjects(_) => {
                 println!("\n\t-- object list --");
-                self.storage_mgr.object().print_list(&self.session_id)
+                self.engine.print_object_list()
             },
             Message::AddAttractor(msg) if state.is_run() => self.handler_add_attractor(msg),
             Message::ShowNames(_) => self.handle_show_names(),
@@ -330,8 +309,7 @@ impl App {
 
     fn shutdown(&mut self) -> Result<()> {
         *shared_access![mut self.state] = State::Off;
-
-        self.storage_mgr.session().unlock(self.session_id)
+        self.engine.shutdown()
     }
 
     fn continue_simulation(&mut self) -> Result<()> {
@@ -349,11 +327,8 @@ impl App {
         self.object_index += 1;
 
         let default_name = format!("object-{}", object_index);
-        let object_storage = self.storage_mgr.object();
 
         self.scene_mgr.add_object(
-            object_storage, 
-            self.session_id, 
             &mut self.engine, 
             msg, 
             default_name
@@ -367,11 +342,8 @@ impl App {
         self.attractor_index += 1;
 
         let default_name = format!("attractor-{}", attractor_index);
-        let attractor_storage = self.storage_mgr.attractor();
 
         self.scene_mgr.add_attractor(
-            attractor_storage, 
-            self.session_id, 
             &mut self.engine,
             msg, 
             default_name
@@ -381,9 +353,7 @@ impl App {
     }
 
     fn handle_rename_object(&mut self, msg: message::RenameObject) -> Result<()> {
-        self.storage_mgr
-            .object()
-            .rename(self.session_id, &msg.old_name, &msg.new_name)
+        self.scene_mgr.rename_object(&mut self.engine, msg.old_name, msg.new_name)
     }
 
     fn handle_virtual_time_step(
@@ -444,22 +414,6 @@ impl App {
         Ok(())
     }
 
-    fn handle_new_session(&mut self, msg: message::NewSession) -> Result<()> {
-        let new_session_id = self.storage_mgr.session().new(msg.name)?;
-        self.storage_mgr.session().unlock(self.session_id)?;
-        self.session_id = new_session_id;
-
-        Ok(())
-    }
-
-    fn handle_load_session(&mut self, msg: message::LoadSession) -> Result<()> {
-        let new_session_id = self.storage_mgr.session().load(&msg.name)?;
-        self.storage_mgr.session().unlock(self.session_id)?;
-        self.session_id = new_session_id;
-
-        Ok(())
-    }
-
     fn handle_show_names(&mut self) -> Result<()> {
         self.is_names_displayed = true;
 
@@ -512,7 +466,7 @@ impl App {
 
                 let camera = &mut self.camera;
 
-                move |name, object, location| {
+                move |object, location| {
                     if is_names_displayed {
                         let mut text_location = camera.project(
                             &Point3::from(location), 
@@ -521,7 +475,7 @@ impl App {
                         text_location[1] = window_size[1] * hidpi_factor - text_location[1];
 
                         window.draw_text(
-                            format!("+ {}", name).as_ref(), 
+                            format!("+ {}", object.name()).as_ref(),
                             &Point2::from(text_location), 
                             text_size, 
                             &font, 
@@ -554,14 +508,7 @@ impl App {
             >= (self.last_session_update_time.num_milliseconds()
                 + ACCESS_UPDATE_TIME.num_milliseconds())
         {
-            trace! {
-                target: LOG_TARGET,
-                "update session access time"
-            };
-
-            self.storage_mgr
-                .session()
-                .update_access_time(self.session_id)?;
+            self.engine.update_session_access_time()?;
             self.last_session_update_time = self.real_time;
         }
 

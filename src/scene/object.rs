@@ -40,6 +40,10 @@ impl Object4d {
         &self.name
     }
 
+    pub fn rename(&mut self, new_name: ObjectName) {
+        self.name = new_name;
+    }
+
     pub fn mass(&self) -> Mass {
         self.mass
     }

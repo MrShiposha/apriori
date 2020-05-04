@@ -36,22 +36,22 @@ impl<'storage> Object<'storage> {
             .map_err(storage_map_err!(Error::Storage::AddObject))
     }
 
-    pub fn rename(&mut self, session_id: SessionId, old_name: &str, new_name: &str) -> Result<()> {
+    pub fn rename(&mut self, session_id: SessionId, object_id: ObjectId, new_name: &str) -> Result<()> {
         self.manager
             .psql
             .execute(
                 &self.manager.rename_object,
-                &[&session_id, &old_name, &new_name],
+                &[&session_id, &object_id, &new_name],
             )
             .map(|_| {})
             .map_err(storage_map_err!(Error::Storage::RenameObject))
     }
 
-    pub fn print_list(&mut self, session_id: &SessionId) -> Result<()> {
+    pub fn print_list(&mut self, session_id: SessionId) -> Result<()> {
         let set = self
             .manager
             .psql
-            .query(&self.manager.object_list, &[session_id])
+            .query(&self.manager.object_list, &[&session_id])
             .map_err(storage_map_err![Error::Storage::ObjectList])?;
 
         for row in set {

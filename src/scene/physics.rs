@@ -5,7 +5,10 @@ use {
     },
     rusqlite::{params, NO_PARAMS},
     threadpool::ThreadPool,
-    log::info,
+    log::{
+        trace,
+        info,
+    },
     crate::{
         make_error, 
         scene::{
@@ -20,6 +23,7 @@ use {
         r#type::{
             Vector,
             SessionId,
+            SessionName,
             ObjectId,
             ObjectName,
             AttractorId,
@@ -31,6 +35,7 @@ use {
         },
         storage::{
             self,
+            StorageManager,
             OccupiedSpacesStorage,
             OccupiedSpace,
         },
@@ -41,28 +46,42 @@ use {
 
 const LOG_TARGET: &'static str = "physics";
 
+const STORAGE_CONNECTION_STRING: &'static str = "host=localhost user=postgres";
+
 pub struct Engine {
     objects: HashMap<ObjectId, Arc<RwLock<Object4d>>>,
     attractors: HashMap<AttractorId, Arc<RwLock<Attractor>>>,
+    master_storage: StorageManager,
     oss: OccupiedSpacesStorage,
+    session_id: SessionId,
     compute_pool: ThreadPool,
     update_time_ratio: f32,
 }
 
 impl Engine {
     pub fn new() -> Result<Self> {
+        let mut master_storage = StorageManager::setup(STORAGE_CONNECTION_STRING)?;
+        let default_session_name = None;
+        let session_id = master_storage
+            .session()
+            .new(default_session_name)?;
+
         let oss = OccupiedSpacesStorage::new()?;
 
         let engine = Self {
             objects: HashMap::new(),
             attractors: HashMap::new(),
+            master_storage,
             oss,
+            session_id,
             compute_pool: ThreadPool::new(num_cpus::get()),
             update_time_ratio: 0.25,
         };
 
         Ok(engine)
     }
+
+
 
     pub fn lower_update_time_threshold(&self) -> f32 {
         self.update_time_ratio
@@ -86,12 +105,14 @@ impl Engine {
 
     pub fn add_attractor(
         &mut self, 
-        mut storage: storage::Attractor,
-        session_id: SessionId,
         attractor: Attractor,
         attractor_name: AttractorName
     ) -> Result<Arc<RwLock<Attractor>>> {
-        let id = storage.add(session_id, &attractor, &attractor_name)?;
+        let id = self.master_storage.attractor().add(
+            self.session_id, 
+            &attractor, 
+            &attractor_name
+        )?;
 
         let attractor = Arc::new(RwLock::new(attractor));
         self.attractors.insert(id, Arc::clone(&attractor));
@@ -100,13 +121,11 @@ impl Engine {
     }
 
     pub fn add_object(
-        &mut self, 
-        mut storage: storage::Object<'_>,
-        session_id: SessionId,
+        &mut self,
         mut object: Object4d,
         step: chrono::Duration,
         initial_location: Vector,
-    ) -> Result<Arc<RwLock<Object4d>>> {
+    ) -> Result<(ObjectId, Arc<RwLock<Object4d>>)> {
         // TODO assert there is no collisions
 
         let mut atom = TrackAtom::with_location(initial_location);
@@ -115,15 +134,76 @@ impl Engine {
         Self::atom_set_velocity(object.mass(), &mut atom, step.as_relative_time(), attractors);
         object.track_mut().push_back(atom.into());
 
-        let id = storage.add(
-            session_id, 
+        let id = self.master_storage.object().add(
+            self.session_id, 
             &object,
         )?;
 
         let object = Arc::new(RwLock::new(object));
         self.objects.insert(id, Arc::clone(&object));
 
-        Ok(object)
+        Ok((id, object))
+    }
+
+    pub fn rename_object_in_master_storage(&mut self, object_id: ObjectId, new_name: &str) -> Result<()> {
+        self.master_storage.object().rename(self.session_id, object_id, new_name)
+    }
+
+    pub fn print_object_list(&mut self) -> Result<()> {
+        self.master_storage.object().print_list(self.session_id)
+    }
+
+    pub fn new_session(&mut self, session_name: Option<SessionName>) -> Result<()> {
+        let new_session_id = self.master_storage.session().new(session_name)?;
+        self.master_storage.session().unlock(self.session_id)?;
+        self.session_id = new_session_id;
+
+        Ok(())
+    }
+
+    pub fn print_current_session_name(&mut self) -> Result<()> {
+        self.master_storage.session().print_current_name(self.session_id)
+    }
+
+    pub fn print_session_list(&mut self) -> Result<()> {
+        self.master_storage.session().print_list()
+    }
+
+    pub fn save_current_session(&mut self, session_name: ObjectName) -> Result<()> {
+        self.master_storage.session().save(self.session_id, session_name.as_str())
+    }
+
+    pub fn load_session(&mut self, session_name: ObjectName) -> Result<()> {
+        let new_session_id = self.master_storage.session().load(session_name.as_str())?;
+        self.master_storage.session().unlock(self.session_id)?;
+        self.session_id = new_session_id;
+
+        Ok(())
+    }
+
+    pub fn rename_session(&mut self, old_name: &str, new_name: &str) -> Result<()> {
+        self.master_storage
+            .session()
+            .rename(old_name, new_name)
+    }
+
+    pub fn delete_session(&mut self, session_name: &str) -> Result<()> {
+        self.master_storage.session().delete(session_name)
+    }
+
+    pub fn shutdown(&mut self) -> Result<()> {
+        self.master_storage.session().unlock(self.session_id)
+    }
+
+    pub fn update_session_access_time(&mut self) -> Result<()> {
+        trace! {
+            target: LOG_TARGET,
+            "update session access time"
+        };
+
+        self.master_storage
+            .session()
+            .update_access_time(self.session_id)
     }
 
     pub fn update_objects(&mut self, vtime: &chrono::Duration) -> Result<()> {
@@ -294,14 +374,6 @@ impl Engine {
             .map(|attr| Arc::clone(attr))
             .collect()
     }
-
-    // pub fn make_new_atom(obj_mass: Mass, atom: &mut TrackAtom, step: RelativeTime, attractors: Vec<Arc<Attractor>>) -> Result<()> {
-    //     // TODO CHECK FOR COLLISION
-
-    //     Self::atom_set_velocity(obj_mass, atom, step, attractors);
-
-    //     Ok(())
-    // }
 }
 
 fn compute_acceleration(obj_mass: Mass, location: &Vector, attractors: &Vec<Arc<RwLock<Attractor>>>) -> Vector {

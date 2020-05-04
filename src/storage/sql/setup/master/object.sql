@@ -43,16 +43,12 @@ $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE PROCEDURE {schema_name}.rename_object(
     session_id integer,
-    old_name varchar(50), 
+    obj_id bigint, 
     new_name varchar(50)
 ) AS $$
     BEGIN
         UPDATE {schema_name}.object
         SET object_name = new_name
-        WHERE session_fk_id = session_id AND object_name = old_name;
-
-        IF (NOT FOUND) THEN
-            RAISE 'object `%` not found', old_name;
-        END IF;
+        WHERE session_fk_id = session_id AND object_id = obj_id;
     END
 $$ LANGUAGE plpgsql;

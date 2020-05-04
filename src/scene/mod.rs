@@ -27,25 +27,12 @@ use {
             AddObject,
         },
         graphics::random_color,
-        scene::{
-            track::{
-                Track,
-                TrackAtom,
-            },
-            physics::{
-                Engine,
-                TimeDirection,
-            },
-        },
-        storage,
+        scene::physics::Engine,
         r#type::{
-            SessionId,
             ObjectId,
             ObjectName,
-            AttractorId,
             AttractorName,
             Vector,
-            TimeFormat
         },
     }
 };
@@ -62,7 +49,7 @@ pub use attractor::Attractor;
 const LOG_TARGET: &'static str = "scene";
 
 pub struct SceneManager {
-    objects: HashMap<ObjectName, (Arc<RwLock<Object4d>>, SceneNode)>,
+    objects: HashMap<ObjectName, (ObjectId, Arc<RwLock<Object4d>>, SceneNode)>,
     attractors: HashMap<AttractorName, Arc<RwLock<Attractor>>>,
     scene: SceneNode,
 }
@@ -78,8 +65,6 @@ impl SceneManager {
 
     pub fn add_object(
         &mut self,
-        storage: storage::Object<'_>,
-        session_id: SessionId,
         engine: &mut Engine,
         msg: AddObject,
         default_name: ObjectName,
@@ -104,15 +89,13 @@ impl SceneManager {
                     color
                 );
 
-                let object = engine.add_object(
-                    storage, 
-                    session_id, 
+                let (id, object) = engine.add_object(
                     object, 
                     msg.step, 
                     msg.location,
                 )?;
 
-                entry.insert((object, node));
+                entry.insert((id, object, node));
                 Ok(())
             }
         }
@@ -120,8 +103,6 @@ impl SceneManager {
 
     pub fn add_attractor(
         &mut self, 
-        storage: storage::Attractor<'_>,
-        session_id: SessionId,
         engine: &mut Engine,
         msg: AddAttractor, 
         default_name: AttractorName
@@ -136,7 +117,7 @@ impl SceneManager {
                 node.set_local_translation(msg.location.into());
 
                 let attractor = Attractor::new(msg.location, msg.mass, msg.gravity_coeff);
-                let id = engine.add_attractor(storage, session_id, attractor, attractor_name)?;
+                let id = engine.add_attractor(attractor, attractor_name)?;
 
                 entry.insert(id);
                 Ok(())
@@ -144,20 +125,20 @@ impl SceneManager {
         }
     }
 
-    pub fn query_objects_by_time<F: FnMut(&str, &Object4d, Vector)>(
+    pub fn query_objects_by_time<F: FnMut(&Object4d, Vector)>(
         &mut self, 
         engine: &mut Engine,
         vtime: &chrono::Duration, 
         mut object_handler: F
     ) {
         match engine.update_objects(vtime) {
-            Ok(()) => for (name, (object, node)) in self.objects.iter_mut() {
+            Ok(()) => for (name, (_id, object, node)) in self.objects.iter_mut() {
                 let sync_object = object.read().unwrap();
     
                 match sync_object.track().interpolate(vtime) {
                     Ok(obj_location) => {
                         node.set_local_translation(obj_location.into());
-                        object_handler(name.as_str(), &*sync_object, obj_location);
+                        object_handler(&*sync_object, obj_location);
                     },
                     Err(err) => error! {
                         target: LOG_TARGET,
@@ -172,11 +153,32 @@ impl SceneManager {
         }
     }
 
-    fn attractors_refs_copy(attractors: &HashMap<String, Arc<Attractor>>) -> Vec<Arc<Attractor>> {
-        attractors.values()
-            .into_iter()
-            .map(|attr| Arc::clone(attr))
-            .collect()
+    pub fn rename_object(
+        &mut self, 
+        engine: &mut Engine, 
+        old_name: ObjectName, 
+        new_name: ObjectName
+    ) -> Result<()> {
+        if old_name == new_name {
+            return Ok(());
+        }
+
+        let (id, object, node) = self.objects.remove(&old_name)
+            .ok_or(make_error![Error::Scene::ObjectNotFound(old_name.clone())])?;
+        
+        match engine.rename_object_in_master_storage(id, new_name.as_str()) {
+            Ok(()) => {
+                object.write().unwrap().rename(new_name.clone());
+                self.objects.insert(new_name, (id, object, node));
+
+                Ok(())
+            }
+            Err(err) => {
+                self.objects.insert(old_name, (id, object, node));
+
+                Err(err)
+            }
+        }
     }
 }
 
