@@ -51,7 +51,8 @@ pub enum Parse {
 
 #[derive(Debug)]
 pub enum Storage {
-    Raw(postgres::Error),
+    MasterStorageRaw(postgres::Error),
+    OccupiedSpacesRaw(rusqlite::Error),
     SetupSchema(postgres::Error),
     SessionCreate(postgres::Error),
     SessionUpdateAccessTime(postgres::Error),
@@ -67,6 +68,8 @@ pub enum Storage {
     ObjectList(postgres::Error),
     OccupiedSpacesStorageInit(rusqlite::Error),
     AddOccupiedSpace(rusqlite::Error),
+    CheckPossibleCollisions(rusqlite::Error),
+    ReadOccupiedSpace(rusqlite::Error),
 }
 
 #[derive(Debug)]
@@ -196,7 +199,13 @@ impl fmt::Display for Parse {
 
 impl From<postgres::Error> for Storage {
     fn from(err: postgres::Error) -> Self {
-        Self::Raw(err)
+        Self::MasterStorageRaw(err)
+    }
+}
+
+impl From<rusqlite::Error> for Storage {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::OccupiedSpacesRaw(err)
     }
 }
 
@@ -206,10 +215,17 @@ impl From<postgres::Error> for Error {
     }
 }
 
+impl From<rusqlite::Error> for Error {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::Storage(err.into())
+    }
+}
+
 impl fmt::Display for Storage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Raw(err) => write!(f, "{}", err),
+            Self::MasterStorageRaw(err) => write!(f, "[master] {}", err),
+            Self::OccupiedSpacesRaw(err) => write!(f, "[oss] {}", err),
             Self::SetupSchema(err) => write!(f, "unable to setup schema: {}", err),
             Self::SessionCreate(err) => write!(f, "unable to create new session: {}", err),
             Self::SessionUpdateAccessTime(err) => {
@@ -227,6 +243,8 @@ impl fmt::Display for Storage {
             Self::ObjectList(err) => write!(f, "unable to display object list: {}", err),
             Self::OccupiedSpacesStorageInit(err) => write!(f, "unable to init OSS: {}", err),
             Self::AddOccupiedSpace(err) => write!(f, "unable to add occupied space: {}", err),
+            Self::CheckPossibleCollisions(err) => write!(f, "unable to check possible collisions: {}", err),
+            Self::ReadOccupiedSpace(err) => write!(f, "unable to read occupied space: {}", err),
         }
     }
 }

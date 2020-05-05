@@ -380,15 +380,13 @@ impl Engine {
     }
 
     fn process_track_parts(&mut self, parts_channel: mpsc::Receiver<TrackPart>) {
-        // TODO resolve collisions
-
         while let Ok(track_part) = parts_channel.recv() {
             let occupied_space = match track_part.get_occupied_space() {
                 Ok(os) => os,
                 Err(err) => {
                     error! {
                         target: LOG_TARGET,
-                        "unable to get occupied space from the new track part (object id: {}): {}",
+                        "unable to get occupied space from the new track part (OID#{}): {}",
                         track_part.object_id,
                         err
                     };
@@ -399,17 +397,41 @@ impl Engine {
 
             trace! {
                 target: LOG_TARGET,
-                "new occupied space (object id: {}): {}",
+                "new occupied space (OID#{}): {}",
                 track_part.object_id,
                 occupied_space
             }
 
-            // TODO check for collision
+            let possible_collisions = match self.oss.check_possible_collisions(&occupied_space) {
+                Ok(possible_collisions) => possible_collisions,
+                Err(err) => {
+                    error! {
+                        target: LOG_TARGET,
+                        "unable to check possible collisions for a new occupied space (OID#{}): {}",
+                        track_part.object_id,
+                        err
+                    }
+
+                    continue;
+                }
+            };
+
+            // TODO resolve for collision
+            for possible_collision in possible_collisions.iter() {
+                info! {
+                    target: LOG_TARGET,
+                    "possible collision detected (OID#{}) w/ OID#{}, t ∈ [{}, {})",
+                    track_part.object_id,
+                    possible_collision.object_id,
+                    possible_collision.t_min,
+                    possible_collision.t_max,
+                }
+            }
 
             if let Err(err) = self.oss.add_occupied_space(occupied_space) {
                 error! {
                     target: LOG_TARGET,
-                    "unable to add new occupied space to OccupiedSpacesStorage (object id: {}): {}",
+                    "unable to add new occupied space to OccupiedSpacesStorage (OID#{}): {}",
                     track_part.object_id,
                     err
                 };
@@ -525,8 +547,10 @@ impl TrackPart {
             object_radius, 
             self.old_atom.location(), 
             self.old_time, 
+            *self.old_atom.velocity(),
             self.new_atom.location(), 
-            self.new_time
+            self.new_time,
+            *self.new_atom.velocity(),
         );
 
         Ok(os)

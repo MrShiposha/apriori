@@ -1,11 +1,13 @@
 use {
     std::fmt,
+    log::error,
     crate::{
         app, 
         make_error, 
         Result,
         r#type::{
             ObjectId,
+            OccupiedSpaceId,
             Coord,
             Distance,
             RelativeTime,
@@ -21,6 +23,8 @@ pub mod attractor;
 pub use object::Object;
 pub use attractor::Attractor;
 pub use session::Session;
+
+const LOG_TARGET: &'static str = "storage";
 
 #[macro_export]
 macro_rules! storage_map_err {
@@ -215,28 +219,78 @@ impl OccupiedSpacesStorage {
 
     pub fn add_occupied_space(&self, occupied_space: OccupiedSpace) -> Result<()> {
         let mut stmt = self.connection.prepare_cached(include_str![
-            "sql/setup/oss/add_occupied_space.sql"
+            "sql/oss/add_occupied_space.sql"
         ]).map_err(|err| make_error![Error::Storage::AddOccupiedSpace(err)])?;
+
+        let bv = occupied_space.begin_velocity;
+        let bvx = bv[0] as f64;
+        let bvy = bv[1] as f64;
+        let bvz = bv[2] as f64;
+
+        let ev = occupied_space.end_velocity;
+        let evx = ev[0] as f64;
+        let evy = ev[1] as f64;
+        let evz = ev[2] as f64;
 
         stmt.execute(rusqlite::params![
             occupied_space.x_min as f64, occupied_space.x_max as f64,
             occupied_space.y_min as f64, occupied_space.y_max as f64,
             occupied_space.z_min as f64, occupied_space.z_max as f64,
             occupied_space.t_min as f64, occupied_space.t_max as f64,
-            occupied_space.object_id
+            occupied_space.object_id,
+            bvx, bvy, bvz,
+            evx, evy, evz
 
         ]).map_err(|err| make_error![Error::Storage::AddOccupiedSpace(err)])?;
 
         Ok(())
     }
+
+    pub fn check_possible_collisions(
+        &self, 
+        occupied_space: &OccupiedSpace
+    ) -> Result<Vec<OccupiedSpace>> {
+        let mut stmt = self.connection.prepare_cached(include_str![
+            "sql/oss/check_possible_collisions.sql"
+        ]).map_err(|err| make_error![Error::Storage::CheckPossibleCollisions(err)])?;
+
+
+        let rows = stmt.query(rusqlite::params![
+            occupied_space.x_min as f64, occupied_space.x_max as f64,
+            occupied_space.y_min as f64, occupied_space.y_max as f64,
+            occupied_space.z_min as f64, occupied_space.z_max as f64,
+            occupied_space.t_min as f64, occupied_space.t_max as f64,
+            occupied_space.object_id,
+        ]).map_err(|err| make_error![Error::Storage::CheckPossibleCollisions(err)])?;
+
+        let possible_collisions = rows
+            .and_then(|row| OccupiedSpace::with_row(row))
+            .into_iter()
+            .filter_map(|res| match res {
+                Ok(os) => Some(os),
+                Err(err) => {
+                    error! {
+                        target: LOG_TARGET,
+                        "unable to read occupied space from row: {}", err
+                    }
+
+                    None
+                }
+            })
+            .collect();
+
+        Ok(possible_collisions)
+    }
 }
 
 pub struct OccupiedSpace {
-    object_id: ObjectId,
-    x_min: Coord, x_max: Coord,
-    y_min: Coord, y_max: Coord,
-    z_min: Coord, z_max: Coord,
-    t_min: Coord, t_max: Coord,
+    pub object_id: ObjectId,
+    pub x_min: Coord, pub x_max: Coord,
+    pub y_min: Coord, pub y_max: Coord,
+    pub z_min: Coord, pub z_max: Coord,
+    pub t_min: Coord, pub t_max: Coord,
+    pub begin_velocity: Vector,
+    pub end_velocity: Vector,
 }
 
 impl OccupiedSpace {
@@ -245,8 +299,10 @@ impl OccupiedSpace {
         cube_size: Distance, 
         begin_location: &Vector, 
         begin_time: RelativeTime,
+        begin_velocity: Vector,
         end_location: &Vector,
         end_time: RelativeTime,
+        end_velocity: Vector,
     ) -> Self {
         macro_rules! min_max {
             ($a:expr, $b:expr $(, +/- $cube_size:expr)?) => {
@@ -276,6 +332,8 @@ impl OccupiedSpace {
             y_min, y_max,
             z_min, z_max,
             t_min, t_max,
+            begin_velocity,
+            end_velocity,
         }
     }
 
@@ -305,6 +363,48 @@ impl OccupiedSpace {
     //         t_min, t_max,
     //     }
     // }
+
+    pub fn with_row(row: &rusqlite::Row<'_>) -> Result<Self> {
+        macro_rules! get {
+            ($idx:literal raw_type) => {
+                row.get($idx)
+                    .map_err(|err| make_error![Error::Storage::ReadOccupiedSpace(err)])?
+            };
+
+            ($idx:literal) => {{
+                let col: f64 = row.get($idx)
+                    .map_err(|err| make_error![Error::Storage::ReadOccupiedSpace(err)])?;
+
+                col as f32
+            }};
+
+
+        }
+
+        let os = Self {
+            object_id: get![0 raw_type],
+            x_min: get![1], 
+            x_max: get![2],
+            y_min: get![3], 
+            y_max: get![4],
+            z_min: get![5], 
+            z_max: get![6],
+            t_min: get![7], 
+            t_max: get![8],
+            begin_velocity: Vector::new(
+                get![9], 
+                get![10],
+                get![11],
+            ),
+            end_velocity: Vector::new(
+                get![12], 
+                get![13],
+                get![14],
+            ),
+        };
+
+        Ok(os)
+    }
 }
 
 impl fmt::Display for OccupiedSpace {
