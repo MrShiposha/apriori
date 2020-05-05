@@ -420,7 +420,7 @@ impl Engine {
             for possible_collision in possible_collisions.iter() {
                 info! {
                     target: LOG_TARGET,
-                    "possible collision detected (OID#{}) w/ OID#{}, t ∈ [{}, {})",
+                    "possible collision detected [OID#{} w/ OID#{}], t ∈ [{}, {})",
                     track_part.object_id,
                     possible_collision.object_id,
                     possible_collision.t_min,
