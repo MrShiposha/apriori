@@ -241,8 +241,9 @@ impl Track {
     }
 
     pub fn interpolate(&self, vtime: &chrono::Duration) -> Result<Vector> {
-        if !self.computed_range().contains(vtime) {
-            return Err(make_error![Error::Scene::UncomputedTrackPart(*vtime)]);
+        let computed_range = self.computed_range();
+        if !computed_range.contains(vtime) {
+            return Err(make_error![Error::Scene::UncomputedTrackPart(*vtime, computed_range)]);
         }
 
         let relative_time = self.offset_time(vtime);

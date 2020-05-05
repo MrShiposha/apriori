@@ -63,4 +63,16 @@ impl Object4d {
     pub fn track_mut(&mut self) -> &mut Track {
         &mut self.track
     }
+
+    pub fn set_computing(&mut self) {
+        self.is_currently_computing = true;
+    }
+
+    pub fn reset_computing(&mut self) {
+        self.is_currently_computing = false;
+    }
+
+    pub fn is_computing(&self) -> bool {
+        self.is_currently_computing
+    }
 }

@@ -3,22 +3,23 @@ use super::{
     r#type::{ObjectName, AttractorName, TimeFormat},
 };
 use std::fmt;
+use std::ops::Range;
 
 pub type Description = String;
 
 #[macro_export]
 macro_rules! make_error {
-    ($($path:ident)::+$(($value:expr))?) => {
-        $crate::make_error![@_impl $($path)::+$(($value))?]
+    ($($path:ident)::+$(($($value:expr),+))?) => {
+        $crate::make_error![@_impl $($path)::+$(($($value),+))?]
     };
 
-    (@_impl $err_enum:ident::$case:ident$(($value:expr))?) => {
-        $crate::error::$err_enum::$case$(($value))?
+    (@_impl $err_enum:ident::$case:ident$(($($value:expr),+))?) => {
+        $crate::error::$err_enum::$case$(($($value),+))?
     };
 
-    (@_impl $err_enum:ident::$sub_err_enum:ident::$($err_tail:ident)::+$(($value:expr))?) => {
+    (@_impl $err_enum:ident::$sub_err_enum:ident::$($err_tail:ident)::+$(($($value:expr),+))?) => {
         $crate::error::$err_enum::$sub_err_enum(
-            $crate::make_error![@_impl $sub_err_enum::$($err_tail)::+$(($value))?]
+            $crate::make_error![@_impl $sub_err_enum::$($err_tail)::+$(($($value),+))?]
         )
     };
 }
@@ -74,7 +75,7 @@ pub enum Storage {
 
 #[derive(Debug)]
 pub enum Scene {
-    UncomputedTrackPart(chrono::Duration),
+    UncomputedTrackPart(chrono::Duration, Range<chrono::Duration>),
     ObjectAlreadyExists(ObjectName),
     ObjectNotFound(ObjectName),
     AttractorAlreadyExists(AttractorName),
@@ -258,10 +259,12 @@ impl From<Scene> for Error {
 impl fmt::Display for Scene {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UncomputedTrackPart(when) => write!(
+            Self::UncomputedTrackPart(when, computed_range) => write!(
                 f,
-                "`{}`: uncomputed track part",
-                TimeFormat::VirtualTimeShort(*when)
+                "`{}`: is not in computed part ({} -> {})",
+                TimeFormat::VirtualTimeShort(*when),
+                TimeFormat::VirtualTimeShort(computed_range.start),
+                TimeFormat::VirtualTimeShort(computed_range.end),
             ),
             Self::ObjectAlreadyExists(obj_name) => {
                 write!(f, "`{}`: object already exists", obj_name)

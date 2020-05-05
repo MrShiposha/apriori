@@ -14,6 +14,7 @@ use {
     },
     log::{
         error,
+        warn,
     },
     crate::{
         Result,
@@ -129,6 +130,7 @@ impl SceneManager {
         vtime: &chrono::Duration, 
         mut object_handler: F
     ) {
+        // TODO skip uncomputed objects
         match engine.update_objects(vtime) {
             Ok(()) => for (name, (_id, object, node)) in self.objects.iter_mut() {
                 let sync_object = shared_access![object];
@@ -138,7 +140,7 @@ impl SceneManager {
                         node.set_local_translation(obj_location.into());
                         object_handler(&*sync_object, obj_location);
                     },
-                    Err(err) => error! {
+                    Err(err) => warn! {
                         target: LOG_TARGET,
                         "unable to interpolate the object `{}`: {}", name, err
                     }

@@ -246,6 +246,7 @@ impl Engine {
                     log_update!(id, half_computed_time => past);
                 }
 
+                sync_object.set_computing();
                 std::mem::drop(sync_object);
                 uncomputed_objects.push((*id, object.share()));
             }
@@ -267,6 +268,10 @@ impl Engine {
         mut objects: Vec<(ObjectId, Shared<Object4d>)>,
         attractors: Vec<Shared<Attractor>>,
     ) {
+        if objects.is_empty() {
+            return;
+        }
+
         let add_node: fn(&mut Track, TrackNode); 
         let last_node: fn(&Track) -> Shared<TrackNode>; 
         let last_atom: for<'n> fn(&'n TrackNode) -> &'n TrackAtom;
@@ -305,8 +310,9 @@ impl Engine {
             let (track_parts_sender, track_parts_receiver) = mpsc::channel();
 
             while let Some((obj_id, object)) = objects.pop() {
-                let sync_object = shared_access![object];
-                if !sync_object.track().is_fully_computed() {
+                if shared_access![object].track().is_fully_computed() {
+                    shared_access![mut object].reset_computing();
+                } else {
                     remaining.push((obj_id, object.share()));
 
                     let object = object.share();
@@ -490,7 +496,7 @@ fn compute_acceleration(obj_mass: Mass, location: &Vector, attractors: &Vec<Shar
     Ok(acceleration)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum TimeDirection {
     Forward,
     Backward,

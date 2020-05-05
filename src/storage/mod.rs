@@ -7,7 +7,6 @@ use {
         Result,
         r#type::{
             ObjectId,
-            OccupiedSpaceId,
             Coord,
             Distance,
             RelativeTime,
