@@ -36,7 +36,7 @@ use {
 };
 
 mod object;
-mod track;
+pub mod track;
 mod attractor;
 mod ringbuffer;
 pub mod physics;

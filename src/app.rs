@@ -2,7 +2,7 @@ use super::{
     cli, graphics,
     message::{self, Message},
     r#type::{Color, RawTime, TimeFormat, TimeUnit},
-    scene::{physics::Engine, SceneManager},
+    scene::{physics::Engine, SceneManager, track::Track},
     shared_access,
     Error, Result, Shared,
     logger::LOGGER,
@@ -95,6 +95,8 @@ pub struct App {
     object_index: usize,
     attractor_index: usize,
     is_names_displayed: bool,
+    is_tracks_displayed: bool,
+    track_step: chrono::Duration,
 }
 
 impl App {
@@ -137,6 +139,8 @@ impl App {
             object_index: 0,
             attractor_index: 0,
             is_names_displayed: false,
+            is_tracks_displayed: false,
+            track_step: chrono::Duration::milliseconds(500),
         }
     }
 
@@ -332,8 +336,20 @@ impl App {
                 self.engine.print_object_list()
             },
             Message::AddAttractor(msg) if state.is_run() => self.handler_add_attractor(msg),
-            Message::ShowNames(_) => self.handle_show_names(),
-            Message::HideNames(_) => self.handle_hide_names(),
+            Message::Names(msg) => {
+                self.is_names_displayed = msg.show;
+
+                Ok(())
+            }
+            Message::Tracks(msg) => {
+                self.is_tracks_displayed = msg.show; 
+
+                if let Some(step) = msg.step {
+                    self.track_step = step;
+                }
+
+                Ok(())
+            }
             unexpected => return Err(Error::UnexpectedMessage(unexpected)),
         }
     }
@@ -463,28 +479,6 @@ impl App {
         Ok(())
     }
 
-    fn handle_show_names(&mut self) -> Result<()> {
-        self.is_names_displayed = true;
-
-        info! {
-            target: LOG_TARGET,
-            "objects' names are shown"
-        }
-
-        Ok(())
-    }
-
-    fn handle_hide_names(&mut self) -> Result<()> {
-        self.is_names_displayed = false;
-
-        info! {
-            target: LOG_TARGET,
-            "objects' names are hided"
-        }
-
-        Ok(())
-    }
-
     fn draw_stats(&mut self) {
         if self.is_stats_enabled {
             self.draw_state_text();
@@ -505,6 +499,9 @@ impl App {
             &self.virtual_time, 
             {
                 let is_names_displayed = self.is_names_displayed;
+                let is_tracks_displayed = self.is_tracks_displayed;
+                let track_step = self.track_step;
+
                 let window = &mut self.window;
                 let window_size = Vector2::new(window.width() as f32, window.height() as f32);
                 let hidpi_factor = window.hidpi_factor() as f32;
@@ -529,6 +526,15 @@ impl App {
                             text_size, 
                             &font, 
                             &graphics::opposite_color(object.color())
+                        );
+                    }
+
+                    if is_tracks_displayed {
+                        Self::draw_track(
+                            window, 
+                            &Point3::from(*object.color()), 
+                            object.track(), 
+                            track_step
                         );
                     }
                 }
@@ -671,6 +677,24 @@ impl App {
         let font = Font::default();
 
         self.window.draw_text(text, &pos, scale, &font, &color);
+    }
+
+    fn draw_track(window: &mut Window, color: &Point3<f32>, track: &Track, step: chrono::Duration) {
+        let mut next_time = track.time_start() + step;
+        
+        let mut last_location = *shared_access![track.node_start()].atom_start().location();
+        while track.computed_range().contains(&next_time) {
+            let new_location = track.interpolate(&next_time).unwrap();
+
+            window.draw_line(
+                &Point3::from(last_location), 
+                &Point3::from(new_location), 
+                color
+            );
+
+            next_time = next_time + step;
+            last_location = new_location;
+        }
     }
 }
 

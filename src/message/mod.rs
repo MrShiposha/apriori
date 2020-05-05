@@ -233,9 +233,21 @@ messages! {
     #[cli(name = "list-objects", about = "list all objects in the current session")]
     message ListObjects {}
 
-    #[cli(name = "show-names", about = "display objects' names")]
-    message ShowNames {}
+    #[cli(name = "names", about = "show/hide scene's actors' names")]
+    message Names {
+        /// Show names
+        #[structopt(short, long)]
+        pub show: bool
+    }
 
-    #[cli(name = "hide-names", about = "hide object's names")]
-    message HideNames {}
+    #[cli(name = "tracks", about = "show/hide objects' tracks")]
+    message Tracks {
+        /// Show tracks
+        #[structopt(short, long)]
+        pub show: bool,
+
+        /// Set track step
+        #[structopt(long, parse(try_from_str = cli::parse_time))]
+        pub step: Option<chrono::Duration>
+    }
 }
