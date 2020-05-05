@@ -26,6 +26,7 @@ macro_rules! make_error {
 #[derive(Debug)]
 pub enum Error {
     Sync(Description),
+    Io(std::io::Error),
     MissingMessage,
     UnknownMessage(String),
     UnexpectedMessage(super::message::Message),
@@ -45,6 +46,7 @@ pub enum Parse {
     Vector(Description),
     Color(css_color_parser::ColorParseError),
     Time(Description),
+    Regex(regex::Error),
 }
 
 #[derive(Debug)]
@@ -78,6 +80,12 @@ pub enum Scene {
 #[derive(Debug)]
 pub enum Physics {
     Init(rusqlite::Error),
+}
+
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
+    }
 }
 
 impl From<clap::Error> for Error {
@@ -122,6 +130,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Sync(desc) => write!(f, "[sync] {}", desc),
+            Error::Io(err) => write!(f, "[io] {}", err),
             Error::MissingMessage => write!(f, "[missing message]"),
             Error::UnknownMessage(msg) => write!(f, "[unknown message] {}", msg),
             Error::UnexpectedMessage(msg) => {
@@ -145,6 +154,12 @@ impl From<clap::Error> for Parse {
     }
 }
 
+impl From<regex::Error> for Parse {
+    fn from(err: regex::Error) -> Self {
+        Self::Regex(err)
+    }
+}
+
 impl From<css_color_parser::ColorParseError> for Parse {
     fn from(err: css_color_parser::ColorParseError) -> Self {
         Self::Color(err)
@@ -153,6 +168,12 @@ impl From<css_color_parser::ColorParseError> for Parse {
 
 impl From<css_color_parser::ColorParseError> for Error {
     fn from(err: css_color_parser::ColorParseError) -> Self {
+        Self::Parse(err.into())
+    }
+}
+
+impl From<regex::Error> for Error {
+    fn from(err: regex::Error) -> Self {
         Self::Parse(err.into())
     }
 }
@@ -167,7 +188,8 @@ impl fmt::Display for Parse {
                 f, "unable to parse time: {}\nHINT: type `{}` to achieve information on how to input a time data.", 
                 desc,
                 message::TimeFormat::get_cli_name()
-            )
+            ),
+            Self::Regex(err) => write!(f, "unable to compile regex: {}", err),
         }
     }
 }

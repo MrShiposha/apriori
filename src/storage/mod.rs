@@ -242,17 +242,17 @@ pub struct OccupiedSpace {
 impl OccupiedSpace {
     pub fn with_track_part(
         object_id: ObjectId,
-        object_radius: Distance, 
+        cube_size: Distance, 
         begin_location: &Vector, 
         begin_time: RelativeTime,
         end_location: &Vector,
         end_time: RelativeTime,
     ) -> Self {
         macro_rules! min_max {
-            ($a:expr, $b:expr) => {
+            ($a:expr, $b:expr $(, +/- $cube_size:expr)?) => {
                 (
-                    $a.min($b) - object_radius,
-                    $a.max($b) + object_radius,
+                    $a.min($b) $(- $cube_size)?,
+                    $a.max($b) $(+ $cube_size)?,
                 )
             };
         }
@@ -265,9 +265,9 @@ impl OccupiedSpace {
         let y_1 = end_location[1];
         let z_1 = end_location[2];
 
-        let (x_min, x_max) = min_max![x_0, x_1];
-        let (y_min, y_max) = min_max![y_0, y_1];
-        let (z_min, z_max) = min_max![z_0, z_1];
+        let (x_min, x_max) = min_max![x_0, x_1, +/- cube_size];
+        let (y_min, y_max) = min_max![y_0, y_1, +/- cube_size];
+        let (z_min, z_max) = min_max![z_0, z_1, +/- cube_size];
         let (t_min, t_max) = min_max![begin_time, end_time];
 
         Self {

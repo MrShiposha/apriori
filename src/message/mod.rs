@@ -1,15 +1,20 @@
-use super::{
-    cli,
-    r#type::{
-        Color,
-        Distance,
-        Mass,
-        GravityCoeff,
-        SessionName,
-        ObjectName,
-        AttractorName,
-        Vector,
-    },
+use {
+    std::path::PathBuf,
+    log::LevelFilter,
+    super::{
+        cli,
+        r#type::{
+            self,
+            Color,
+            Distance,
+            Mass,
+            GravityCoeff,
+            SessionName,
+            ObjectName,
+            AttractorName,
+            Vector,
+        },
+    }
 };
 
 #[macro_use]
@@ -43,6 +48,38 @@ messages! {
 
     #[cli(name = "p", about = "pause the simulation")]
     message PauseShort {}
+
+    #[cli(name = "list-disabled-log-targets", about = "list all disabled log targets")]
+    message ListDisabledLogTargets {}
+
+    #[cli(name = "log-target", about = "enable/disable log target")]
+    message LogTarget {
+        /// Log target's regex
+        #[structopt(short, long, required_unless = "deps")]
+        pub target: Option<r#type::LogTarget>,
+
+        /// Use dependencies log targets
+        #[structopt(long, conflicts_with = "target")]
+        pub deps: bool,
+
+        /// Disable log target
+        #[structopt(short, long)]
+        pub disable: bool,
+    }
+
+    #[cli(name = "log-filter", about = "get/set logging filter")]
+    message LogFilter {
+        /// Max logging level
+        #[structopt(short, long)]
+        pub filter: Option<LevelFilter>
+    }
+
+    #[cli(name = "log-file", about = "get/set log file")]
+    message LogFile {
+        /// Log file path
+        #[structopt(short, long, parse(from_os_str))]
+        pub path: Option<PathBuf>
+    }
 
     #[cli(name = "time-format", about = "input time format information (tells how to specify a time)")]
     message TimeFormat {}

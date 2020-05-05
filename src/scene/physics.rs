@@ -3,7 +3,6 @@ use {
         collections::hash_map::HashMap,
         sync::mpsc,
     },
-    rusqlite::{params, NO_PARAMS},
     threadpool::ThreadPool,
     log::{
         trace,
@@ -11,7 +10,6 @@ use {
         error,
     },
     crate::{
-        make_error, 
         shared_access,
         scene::{
             Object4d,
@@ -36,7 +34,6 @@ use {
             AsRelativeTime,
         },
         storage::{
-            self,
             StorageManager,
             OccupiedSpacesStorage,
             OccupiedSpace,
@@ -46,7 +43,7 @@ use {
     },
 };
 
-const LOG_TARGET: &'static str = "physics";
+const LOG_TARGET: &'static str = "engine";
 
 const STORAGE_CONNECTION_STRING: &'static str = "host=localhost user=postgres";
 
@@ -323,7 +320,6 @@ impl Engine {
 
                         let node = last_node(track);
                         let sync_node = shared_access![node];
-
 
                         let time = last_time(track);
                         let new_time = new_time(track, time);

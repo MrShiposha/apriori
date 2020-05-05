@@ -5,6 +5,7 @@ use super::{
     scene::{physics::Engine, SceneManager},
     shared_access,
     Error, Result, Shared,
+    logger::LOGGER,
 };
 use kiss3d::{
     camera::{
@@ -227,6 +228,54 @@ impl App {
             }
             Message::Pause(_) | Message::PauseShort(_) if state.is_run() => self.pause_simulation(),
             Message::Shutdown(_) => self.shutdown(),
+            Message::ListDisabledLogTargets(_) => {
+                println!("\n\t-- disabled log targets --");
+                shared_access![LOGGER].print_disabled_targets();
+
+                Ok(())
+            }
+            Message::LogTarget(msg) => {
+                if msg.deps {
+                    if msg.disable {
+                        shared_access![mut LOGGER].disable_deps_targets();
+                    } else {
+                        shared_access![mut LOGGER].enable_deps_targets();
+                    }
+                } else {
+                    if msg.disable {
+                        shared_access![mut LOGGER].disable_target(msg.target.unwrap())?;
+                    } else {
+                        shared_access![mut LOGGER].enable_target(msg.target.unwrap());
+                    }
+                }
+                
+                Ok(())
+            }
+            Message::LogFilter(msg) => {
+                match msg.filter {
+                    Some(filter) => shared_access![mut LOGGER].set_max_level(filter),
+                    None => {
+                        let level = shared_access![LOGGER].get_max_level();
+
+                        println!("{}", level);
+                    }
+                }
+
+                Ok(())
+            }
+            Message::LogFile(msg) => {
+                match msg.path {
+                    Some(path) => shared_access![mut LOGGER].set_log_file_path(path),
+                    None => {
+                        match shared_access![LOGGER].get_log_file_path() {
+                            Some(path) => println!("{}", path.display()),
+                            None => println!("/log file path is unset/")
+                        }
+
+                        Ok(())
+                    }
+                }
+            }
             Message::TimeFormat(_) => {
                 println!();
                 println!("\tDigit: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9");

@@ -3,6 +3,8 @@ use nalgebra::{Point3, Vector3};
 use phf::phf_map;
 use std::fmt;
 
+pub type LogTarget = String;
+
 pub type Coord = f32;
 pub type ColorChannel = f32;
 pub type Vector = Vector3<Coord>;
