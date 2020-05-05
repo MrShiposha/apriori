@@ -53,6 +53,13 @@ impl<T: Default + Clone> RingBuffer<T> {
         }
     }
 
+    pub fn iter(&self) -> Iter<T> {
+        Iter {
+            ringbuffer: self,
+            index: 0,
+        }
+    }
+
     /// Returns true if the start_index has changed
     pub fn push_back(&mut self, el: T) -> bool {
         let capacity = self.capacity();
@@ -165,6 +172,26 @@ where
 {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         self.get_mut(index)
+    }
+}
+
+pub struct Iter<'rb, T: Default + Clone> {
+    ringbuffer: &'rb RingBuffer<T>,
+    index: usize,
+}
+
+impl<'rb, T: Default + Clone> Iterator for Iter<'rb, T> {
+    type Item = &'rb T;
+    
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index == self.ringbuffer.len() {
+            None
+        } else {
+            let index = self.index;
+            self.index += 1;
+
+            Some(self.ringbuffer.get(index))
+        }
     }
 }
 
@@ -422,5 +449,16 @@ mod tests {
         assert!(buffer.len() == 2);
         assert!(buffer[0] == 3);
         assert!(buffer[1] == 4);
+    }
+
+    #[test]
+    fn test_iter() {
+        let mut buffer = RingBuffer::<u32>::new(3);
+        let src_vec = vec![1, 2, 3];
+
+        buffer.append(src_vec.clone());
+
+        let vec = buffer.iter().map(|item| *item).collect::<Vec<_>>();
+        assert_eq!(vec, src_vec);
     }
 }

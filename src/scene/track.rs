@@ -12,7 +12,14 @@ use {
             AsRelativeTime
         },
         math::hermite_interpolation,
-        scene::{ringbuffer::RingBuffer, Object4d, TruncateRange},
+        scene::{
+            ringbuffer::{
+                self,
+                RingBuffer,
+            },
+            Object4d, 
+            TruncateRange
+        },
         shared::Shared,
         Result,
     },
@@ -341,6 +348,10 @@ impl Track {
         } else {
             None
         }
+    }
+
+    pub fn iter_nodes(&self) -> ringbuffer::Iter<Shared<TrackNode>> {
+        self.nodes.iter()
     }
 
     pub fn is_fully_computed(&self) -> bool {
