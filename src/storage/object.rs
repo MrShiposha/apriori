@@ -2,7 +2,9 @@ use crate::{
     graphics,
     scene::Object4d,
     r#type::{SessionId, ObjectId},
-    storage_map_err, Result,
+    storage_map_err, 
+    query,
+    Result,
 };
 
 pub struct Object<'storage> {
@@ -20,9 +22,19 @@ impl<'storage> Object<'storage> {
         object: &Object4d,
     ) -> Result<ObjectId> {
         self.manager
-            .psql
+            .pool
+            .get()?
             .query_one(
-                &self.manager.add_object,
+                query! {"
+                    SELECT {schema_name}.add_object(
+                        $1,
+                        $2,
+                        $3,
+                        $4,
+                        $5,
+                        $6
+                    )
+                "},
                 &[
                     &session_id,
                     object.name(),
@@ -38,21 +50,29 @@ impl<'storage> Object<'storage> {
 
     pub fn rename(&mut self, session_id: SessionId, object_id: ObjectId, new_name: &str) -> Result<()> {
         self.manager
-            .psql
+            .pool
+            .get()?
             .execute(
-                &self.manager.rename_object,
+                query!["CALL {schema_name}.rename_object($1, $2, $3)"],
                 &[&session_id, &object_id, &new_name],
-            )
-            .map(|_| {})
+            ).map(|_| {})
             .map_err(storage_map_err!(Error::Storage::RenameObject))
     }
 
     pub fn print_list(&mut self, session_id: SessionId) -> Result<()> {
         let set = self
             .manager
-            .psql
-            .query(&self.manager.object_list, &[&session_id])
-            .map_err(storage_map_err![Error::Storage::ObjectList])?;
+            .pool
+            .get()?
+            .query(
+                query! {"
+                    SELECT object_name
+                    FROM {schema_name}.object
+                    WHERE session_fk_id = $1
+                    ORDER BY object_name
+                "}, 
+                &[&session_id]
+            ).map_err(storage_map_err![Error::Storage::ObjectList])?;
 
         for row in set {
             let name: &str = row.get(0);

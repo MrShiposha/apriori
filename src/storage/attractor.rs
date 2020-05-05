@@ -1,6 +1,6 @@
 use crate::{
     r#type::{SessionId, AttractorId, AttractorName},
-    storage_map_err, Result,
+    storage_map_err, query, Result,
 };
 
 pub struct Attractor<'storage> {
@@ -21,9 +21,20 @@ impl<'storage> Attractor<'storage> {
         let location = attractor.location();
 
         self.manager
-            .psql
+            .pool
+            .get()?
             .query_one(
-                &self.manager.add_attractor,
+                query! {"
+                    SELECT {schema_name}.add_attractor(
+                        $1, 
+                        $2, 
+                        $3, 
+                        $4,
+                        $5,
+                        $6,
+                        $7
+                    )
+                "},
                 &[
                     &session_id,
                     attractor_name,

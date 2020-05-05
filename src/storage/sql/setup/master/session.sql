@@ -90,7 +90,7 @@ AS $$
     END
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION {schema_name}.get_session(id integer)
+CREATE OR REPLACE FUNCTION {schema_name}.get_session_name(id integer)
 RETURNS varchar(50)
 AS $$
     BEGIN

@@ -28,6 +28,7 @@ macro_rules! make_error {
 pub enum Error {
     Sync(Description),
     Io(std::io::Error),
+    ConnectionPool(r2d2::Error),
     MissingMessage,
     UnknownMessage(String),
     UnexpectedMessage(super::message::Message),
@@ -114,6 +115,12 @@ impl From<rustyline::error::ReadlineError> for Error {
     }
 }
 
+impl From<r2d2::Error> for Error {
+    fn from(err: r2d2::Error) -> Self {
+        Self::ConnectionPool(err)
+    }
+}
+
 impl<T, E: From<Error>> Into<::std::result::Result<T, E>> for Error {
     fn into(self) -> ::std::result::Result<T, E> {
         Err(self.into())
@@ -135,6 +142,7 @@ impl fmt::Display for Error {
         match self {
             Error::Sync(desc) => write!(f, "[sync] {}", desc),
             Error::Io(err) => write!(f, "[io] {}", err),
+            Error::ConnectionPool(err) => write!(f, "[connection pool] {}", err),
             Error::MissingMessage => write!(f, "[missing message]"),
             Error::UnknownMessage(msg) => write!(f, "[unknown message] {}", msg),
             Error::UnexpectedMessage(msg) => {
