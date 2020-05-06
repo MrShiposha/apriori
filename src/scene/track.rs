@@ -246,7 +246,7 @@ impl Track {
             return Err(make_error![Error::Scene::UncomputedTrackPart(*vtime, computed_range)]);
         }
 
-        let relative_time = self.offset_time(vtime);
+        let relative_time = self.time_offset(vtime);
         let node_index = self.node_index(vtime);
         let lhs_node_time = chrono::Duration::milliseconds(
             self.compute_step.num_milliseconds() * node_index as RawTime
@@ -310,7 +310,11 @@ impl Track {
 
     pub fn time_end(&self) -> chrono::Duration {
         // TODO: take into account composite nodes
-        self.time_start + self.compute_step * (self.nodes.len() - 1) as i32
+        self.time_start + self.time_length()
+    }
+
+    pub fn time_length(&self) -> chrono::Duration {
+        self.compute_step * (self.nodes.len() - 1) as i32
     }
 
     pub fn node_start(&self) -> Shared<TrackNode> {
@@ -368,11 +372,11 @@ impl Track {
     }
 
     fn node_index(&self, vtime: &chrono::Duration) -> usize {
-        (self.offset_time(vtime).num_milliseconds() / self.compute_step.num_milliseconds())
+        (self.time_offset(vtime).num_milliseconds() / self.compute_step.num_milliseconds())
             as usize
     }
 
-    fn offset_time(&self, vtime: &chrono::Duration) -> chrono::Duration {
+    pub fn time_offset(&self, vtime: &chrono::Duration) -> chrono::Duration {
         *vtime - self.time_start
     }
 }

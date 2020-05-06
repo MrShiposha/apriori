@@ -80,8 +80,6 @@ impl Engine {
         Ok(engine)
     }
 
-
-
     pub fn lower_update_time_threshold(&self) -> f32 {
         self.update_time_ratio
     }
@@ -94,10 +92,9 @@ impl Engine {
         assert!((0.0..1.0).contains(&self.update_time_ratio));
 
         let track = object.track();
-        let track_time_start = track.time_start();
-        let computed_duration = (track.time_end() - track_time_start).num_milliseconds() as RelativeTime;
-        let offset = (*vtime - track_time_start).num_milliseconds() as RelativeTime;
-        let relative_time = offset / computed_duration;
+        let time_length = track.time_length().num_milliseconds() as RelativeTime;
+        let time_offset = track.time_offset(vtime).num_milliseconds() as RelativeTime;
+        let relative_time = time_offset / time_length;
 
         relative_time
     }
@@ -232,18 +229,21 @@ impl Engine {
             if rt.is_nan() || rt < self.lower_update_time_threshold() || rt > self.upper_update_time_threshold() {
                 let mut sync_object = shared_access![mut object];
                 let track = sync_object.track_mut();
-                let half_computed_time = track.time_start() + (track.time_end() - track.time_start()) / 2;
+                let border_time = track.time_start() + track.time_length() / 2;
 
                 if rt.is_nan() || rt > self.upper_update_time_threshold() {
                     compute_direction = TimeDirection::Forward;
-                    track.truncate(..half_computed_time);
+                    track.truncate(..border_time);
 
-                    log_update!(id, half_computed_time => future);
+                    log_update!(id, border_time => future);
                 } else {
                     compute_direction = TimeDirection::Backward;
-                    track.truncate(half_computed_time..);
 
-                    log_update!(id, half_computed_time => past);
+                    // LOOK AT THE PAPER PICTURE
+                    let border_time = border_time + *track.compute_step();
+                    track.truncate(border_time..);
+
+                    log_update!(id, border_time => past);
                 }
 
                 sync_object.set_computing();
