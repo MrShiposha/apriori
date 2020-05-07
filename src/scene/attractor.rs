@@ -1,6 +1,5 @@
 use {
     crate::r#type::{
-        AttractorId,
         Mass,
         GravityCoeff,
         Vector,

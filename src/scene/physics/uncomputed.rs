@@ -1,11 +1,6 @@
 use {
-    std::ops::{
-        Deref,
-        DerefMut,
-    },
     crate::{
         scene::{
-            Object4d,
             track::{
                 Track,
                 TrackNode,
@@ -13,7 +8,6 @@ use {
             },
         },
         r#type::{
-            ObjectId,
             RelativeTime,
             AsRelativeTime,
         },

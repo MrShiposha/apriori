@@ -1,6 +1,5 @@
 use {
     crate::{
-        shared_access,
         shared::Shared,
         scene::{
             Object4d,
