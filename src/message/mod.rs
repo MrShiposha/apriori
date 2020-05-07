@@ -233,18 +233,18 @@ messages! {
     #[cli(name = "list-objects", about = "list all objects in the current session")]
     message ListObjects {}
 
-    #[cli(name = "names", about = "show/hide scene's actors' names")]
+    #[cli(name = "names", about = "enable/disable scene's actors' names")]
     message Names {
-        /// Show names
+        /// Disable names
         #[structopt(short, long)]
-        pub show: bool
+        pub disable: bool
     }
 
-    #[cli(name = "tracks", about = "show/hide objects' tracks")]
+    #[cli(name = "tracks", about = "enable/disable objects' tracks")]
     message Tracks {
         /// Show tracks
         #[structopt(short, long)]
-        pub show: bool,
+        pub disable: bool,
 
         /// Set track step
         #[structopt(long, parse(try_from_str = cli::parse_time))]

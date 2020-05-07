@@ -337,12 +337,12 @@ impl App {
             },
             Message::AddAttractor(msg) if state.is_run() => self.handler_add_attractor(msg),
             Message::Names(msg) => {
-                self.is_names_displayed = msg.show;
+                self.is_names_displayed = !msg.disable;
 
                 Ok(())
             }
             Message::Tracks(msg) => {
-                self.is_tracks_displayed = msg.show; 
+                self.is_tracks_displayed = !msg.disable; 
 
                 if let Some(step) = msg.step {
                     self.track_step = step;
