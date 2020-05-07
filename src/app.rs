@@ -396,6 +396,7 @@ impl App {
         self.scene_mgr.add_object(
             &mut self.engine, 
             msg, 
+            self.virtual_time,
             default_name
         )?;
 

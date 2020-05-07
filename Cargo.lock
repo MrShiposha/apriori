@@ -75,7 +75,6 @@ dependencies = [
  "lazy_static 1.4.0",
  "log",
  "nalgebra",
- "num_cpus",
  "phf",
  "postgres",
  "postgres-types",

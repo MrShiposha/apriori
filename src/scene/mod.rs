@@ -66,6 +66,7 @@ impl SceneManager {
         &mut self,
         engine: &mut Engine,
         msg: AddObject,
+        time: chrono::Duration,
         default_name: ObjectName,
     ) -> Result<()> {
         let obj_name = msg.name.unwrap_or(default_name);
@@ -90,6 +91,7 @@ impl SceneManager {
 
                 let (id, object) = engine.add_object(
                     object, 
+                    time,
                     msg.step, 
                     msg.location,
                 )?;
@@ -130,7 +132,6 @@ impl SceneManager {
         vtime: &chrono::Duration, 
         mut object_handler: F
     ) {
-        // TODO skip uncomputed objects
         match engine.update_objects(vtime) {
             Ok(()) => for (name, (_id, object, node)) in self.objects.iter_mut() {
                 let sync_object = shared_access![object];

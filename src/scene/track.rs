@@ -325,6 +325,12 @@ impl Track {
         self.nodes.last().unwrap().share()
     }
 
+    pub fn set_initial_node(&mut self, node: TrackNode, time_start: chrono::Duration) {
+        self.nodes.clear();
+        self.time_start = time_start;
+        self.nodes.push_back(node.into());
+    }
+
     pub fn push_back(&mut self, node: TrackNode) {
         if self.nodes.push_back(node.into()) {
             self.time_start = self.time_start + self.compute_step;

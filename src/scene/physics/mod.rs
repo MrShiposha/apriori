@@ -15,7 +15,6 @@ use {
             Object4d,
             Attractor,
             track::{
-                Track,
                 TrackNode,
                 TrackAtom,
             }
@@ -43,17 +42,26 @@ use {
     },
 };
 
+mod uncomputed;
+mod task;
+
+use uncomputed::*;
+use task::Task;
+
 const LOG_TARGET: &'static str = "engine";
 
 const STORAGE_CONNECTION_STRING: &'static str = "host=localhost user=postgres";
 
+pub type Objects = Shared<HashMap<ObjectId, Shared<Object4d>>>;
+pub type Attractors = Shared<HashMap<AttractorId, Shared<Attractor>>>;
+
 pub struct Engine {
-    objects: HashMap<ObjectId, Shared<Object4d>>,
-    attractors: HashMap<AttractorId, Shared<Attractor>>,
+    objects: Objects,
+    attractors: Attractors,
     master_storage: StorageManager,
-    oss: OccupiedSpacesStorage,
     session_id: SessionId,
-    compute_pool: ThreadPool,
+    thread_pool: ThreadPool,
+    task_sender: mpsc::Sender<Task>,
     update_time_ratio: f32,
 }
 
@@ -67,15 +75,19 @@ impl Engine {
 
         let oss = OccupiedSpacesStorage::new()?;
 
+        let (task_sender, task_receiver) = mpsc::channel();
+
         let engine = Self {
-            objects: HashMap::new(),
-            attractors: HashMap::new(),
+            objects: Shared::new(),
+            attractors: Shared::new(),
             master_storage,
-            oss,
             session_id,
-            compute_pool: ThreadPool::new(num_cpus::get()),
+            thread_pool: ThreadPool::default(),
+            task_sender,
             update_time_ratio: 0.25,
         };
+
+        engine.spawn_computational_thread(oss, task_receiver);
 
         Ok(engine)
     }
@@ -111,14 +123,14 @@ impl Engine {
         )?;
 
         let attractor = Shared::from(attractor);
-        self.attractors.insert(id, attractor.share());
-        
+        shared_access![mut self.attractors].insert(id, attractor.share());
         Ok(attractor)
     }
 
     pub fn add_object(
         &mut self,
         mut object: Object4d,
+        time: chrono::Duration,
         step: chrono::Duration,
         initial_location: Vector,
     ) -> Result<(ObjectId, Shared<Object4d>)> {
@@ -126,9 +138,14 @@ impl Engine {
 
         let mut atom = TrackAtom::with_location(initial_location);
 
-        let attractors = self.attractors_refs_copy();
-        Self::atom_set_velocity(object.mass(), &mut atom, step.as_relative_time(), attractors)?;
-        object.track_mut().push_back(atom.into());
+        Self::atom_set_velocity(
+            object.mass(), 
+            &mut atom, 
+            step.as_relative_time(), 
+            self.attractors.share()
+        )?;
+
+        object.track_mut().set_initial_node(atom.into(), time);
 
         let id = self.master_storage.object().add(
             self.session_id, 
@@ -136,8 +153,8 @@ impl Engine {
         )?;
 
         let object = Shared::from(object);
-        self.objects.insert(id, object.share());
-
+        shared_access![mut self.objects].insert(id, object.share());
+        
         Ok((id, object))
     }
 
@@ -203,7 +220,7 @@ impl Engine {
     }
 
     pub fn update_objects(&mut self, vtime: &chrono::Duration) -> Result<()> {
-        // TODO load from DB
+        // // TODO load from DB
 
         macro_rules! log_update {
             ($id:expr, $from:expr => $to:ident) => {
@@ -220,13 +237,18 @@ impl Engine {
         let mut compute_direction = TimeDirection::Forward;
         let mut uncomputed_objects = vec![];
 
-        for (id, object) in self.objects.iter() {
+        let objects = shared_access![self.objects];
+        for (id, object) in objects.iter() {
             let rt = self.track_relative_time(
                 &*shared_access![object], 
                 vtime
             );
 
             if rt.is_nan() || rt < self.lower_update_time_threshold() || rt > self.upper_update_time_threshold() {
+                if shared_access![object].is_computing() {
+                    continue;
+                }
+
                 let mut sync_object = shared_access![mut object];
                 let track = sync_object.track_mut();
                 let border_time = track.time_start() + track.time_length() / 2;
@@ -246,96 +268,133 @@ impl Engine {
                     log_update!(id, border_time => past);
                 }
 
-                sync_object.set_computing();
                 std::mem::drop(sync_object);
                 uncomputed_objects.push((*id, object.share()));
             }
         }
 
-        let attractors = self.attractors_refs_copy();
-        self.compute(
-            compute_direction, 
-            uncomputed_objects, 
-            attractors
-        );
+        std::mem::drop(objects);
+
+        self.task_sender.send(
+            Task::new(compute_direction, uncomputed_objects)
+        ).unwrap();
 
         Ok(())
     }
 
-    fn compute(
-        &mut self, 
-        compute_time_direction: TimeDirection,
-        mut objects: Vec<(ObjectId, Shared<Object4d>)>,
-        attractors: Vec<Shared<Attractor>>,
+    fn spawn_computational_thread(&self, oss: OccupiedSpacesStorage, task_receiver: mpsc::Receiver<Task>) {
+        std::thread::spawn({
+            let thread_pool = self.thread_pool.clone();
+            let attractors = self.attractors.share();
+
+            move || {
+                Self::computational_thread(thread_pool, oss, attractors, task_receiver)
+            }
+        });
+    }
+
+    fn computational_thread(
+        thread_pool: ThreadPool, 
+        oss: OccupiedSpacesStorage,
+        attractors: Attractors, 
+        task_receiver: mpsc::Receiver<Task>
     ) {
-        if objects.is_empty() {
-            return;
+        let (forward_task_sender, forward_task_receiver) = mpsc::channel();
+        let (backward_task_sender, backward_task_receiver) = mpsc::channel();
+
+        std::thread::spawn({
+            let thread_pool = thread_pool.clone();
+            let oss = oss.clone();
+            let attractors = attractors.share();
+
+            move || {
+                Self::process_uncomputed::<ForwardUncomputedTrack>(
+                    thread_pool, 
+                    oss,
+                    forward_task_receiver, 
+                    attractors
+                )
+            }
+        });
+
+        std::thread::spawn(move || {
+            Self::process_uncomputed::<BackwardUncomputedTrack>(
+                thread_pool, 
+                oss,
+                backward_task_receiver, 
+                attractors
+            )
+        });
+
+        loop {
+            let task = match task_receiver.recv() {
+                Ok(task) => task,
+                Err(_) => return
+            };
+
+            match task.time_direction {
+                TimeDirection::Forward => forward_task_sender.send(task).unwrap(),
+                TimeDirection::Backward => backward_task_sender.send(task).unwrap(),
+            }
         }
+    }
 
-        let add_node: fn(&mut Track, TrackNode); 
-        let last_node: fn(&Track) -> Shared<TrackNode>; 
-        let last_atom: for<'n> fn(&'n TrackNode) -> &'n TrackAtom;
-        let last_time: fn(&Track) -> RelativeTime;
-        let new_time: fn(&Track, RelativeTime) -> RelativeTime;
-        
-        match compute_time_direction {
-            TimeDirection::Forward => {
-                add_node = Track::push_back;
-                last_node = Track::node_end;
-                last_atom = TrackNode::atom_end;
-                last_time = |track| track.time_end().as_relative_time();
-                new_time = |track, time| {
-                    let step = track.relative_compute_step();
-                    time + step
-                };
-            },
-            TimeDirection::Backward => {
-                add_node = Track::push_front;
-                last_node = Track::node_start;
-                last_atom = TrackNode::atom_start;
-                last_time = |track| track.time_start().as_relative_time();
-                new_time = |track, time| {
-                    let step = track.relative_compute_step();
-                    time - step
-                };
-            },
-        }
+    fn process_uncomputed<U>(
+        thread_pool: ThreadPool, 
+        oss: OccupiedSpacesStorage,
+        task_receiver: mpsc::Receiver<Task>,
+        attractors: Attractors
+    )
+    where
+        U: UncomputedTrack
+    {
+        let mut objects = vec![];
+        let mut remaining = vec![];
 
-        let mut temp_vec = vec![];
-
-        let mut objects = &mut objects;
-        let mut remaining = &mut temp_vec;
-
-        while !objects.is_empty() {
+        loop {
             let (track_parts_sender, track_parts_receiver) = mpsc::channel();
+
+            if objects.is_empty() {
+                let task = match task_receiver.recv() {
+                    Ok(task) => task,
+                    Err(_) => return
+                };
+
+                objects = task.objects;
+            }
+
+            while let Ok(mut task) = task_receiver.try_recv() {
+                objects.append(&mut task.objects);
+            }
 
             while let Some((obj_id, object)) = objects.pop() {
                 if shared_access![object].track().is_fully_computed() {
                     shared_access![mut object].reset_computing();
                 } else {
+                    if !shared_access![object].is_computing() {
+                        shared_access![mut object].set_computing();
+                    }
+
                     remaining.push((obj_id, object.share()));
 
                     let object = object.share();
                     let attractors = attractors.clone();
                     let track_parts_sender = track_parts_sender.clone();
-                    self.compute_pool.execute(move || {
+                    thread_pool.execute(move || {
                         let mut sync_object = shared_access![mut object];
                         let obj_mass = sync_object.mass();
 
                         let track = sync_object.track_mut();
 
-                        let node = last_node(track);
+                        let node = <U as UncomputedTrack>::last_node(track);
                         let sync_node = shared_access![node];
 
-                        let time = last_time(track);
-                        let new_time = new_time(track, time);
+                        let time = <U as UncomputedTrack>::last_time(track);
+                        let new_time = <U as UncomputedTrack>::new_time(track);
 
-                        let atom = last_atom(&sync_node);
+                        let atom = <U as UncomputedTrack>::last_atom(&sync_node);
 
-                        let step = match compute_time_direction { 
-                            TimeDirection::Forward => track.relative_compute_step(),
-                            TimeDirection::Backward => -track.relative_compute_step(),
-                        };
+                        let step = <U as UncomputedTrack>::time_step(track);
 
                         let mut new_atom = atom.at_next_location(step);
 
@@ -350,19 +409,13 @@ impl Engine {
                                     obj_id,
                                     object.share(),
                                     node.share(),
-                                    add_node,
                                     atom.clone(), 
                                     time,
                                     new_atom,
                                     new_time
                                 );
                                 
-                                if let Err(err) = track_parts_sender.send(track_part) {
-                                    error! {
-                                        target: LOG_TARGET,
-                                        "unable to send track part: {}", err
-                                    }
-                                }
+                                track_parts_sender.send(track_part).unwrap();
                             },
                             Err(err) => error! {
                                 target: LOG_TARGET,
@@ -381,12 +434,15 @@ impl Engine {
 
             std::mem::swap(&mut objects, &mut remaining);
 
-            self.process_track_parts(track_parts_receiver);
+            Self::process_track_parts::<U>(&oss, track_parts_receiver);
         }
     }
 
-    fn process_track_parts(&mut self, parts_channel: mpsc::Receiver<TrackPart>) {
-        while let Ok(track_part) = parts_channel.recv() {
+    fn process_track_parts<U>(oss: &OccupiedSpacesStorage, track_parts_receiver: mpsc::Receiver<TrackPart>) 
+    where
+        U: UncomputedTrack
+    {
+        while let Ok(track_part) = track_parts_receiver.recv() {
             let occupied_space = match track_part.get_occupied_space() {
                 Ok(os) => os,
                 Err(err) => {
@@ -408,7 +464,7 @@ impl Engine {
                 occupied_space
             }
 
-            let possible_collisions = match self.oss.check_possible_collisions(&occupied_space) {
+            let possible_collisions = match oss.check_possible_collisions(&occupied_space) {
                 Ok(possible_collisions) => possible_collisions,
                 Err(err) => {
                     error! {
@@ -422,7 +478,7 @@ impl Engine {
                 }
             };
 
-            // TODO resolve for collision
+            // TODO resolve collisions
             for possible_collision in possible_collisions.iter() {
                 info! {
                     target: LOG_TARGET,
@@ -434,7 +490,7 @@ impl Engine {
                 }
             }
 
-            if let Err(err) = self.oss.add_occupied_space(occupied_space) {
+            if let Err(err) = oss.add_occupied_space(occupied_space) {
                 error! {
                     target: LOG_TARGET,
                     "unable to add new occupied space to OccupiedSpacesStorage (OID#{}): {}",
@@ -446,7 +502,7 @@ impl Engine {
             }
 
             let object_id = track_part.object_id;
-            if let Err(err) = track_part.add_new_node() {
+            if let Err(err) = track_part.add_new_node::<U>() {
                 error! {
                     target: LOG_TARGET,
                     "unable to add new track node to the object (id: {}): {}", 
@@ -457,43 +513,39 @@ impl Engine {
         }
     }
 
-    fn atom_set_velocity(obj_mass: Mass, atom: &mut TrackAtom, step: RelativeTime, attractors: Vec<Shared<Attractor>>) -> Result<()> {
-        let mut acceleration = compute_acceleration(obj_mass, atom.location(), &attractors)?;
+    fn atom_set_velocity(obj_mass: Mass, atom: &mut TrackAtom, step: RelativeTime, attractors: Attractors) -> Result<()> {
+        let mut acceleration = Self::compute_acceleration(obj_mass, atom.location(), attractors)?;
         acceleration.scale_mut(step);
         atom.set_velocity(atom.velocity() + acceleration);
 
         Ok(())
     }
 
-    fn attractors_refs_copy(&self) -> Vec<Shared<Attractor>> {
-        self.attractors.values()
-            .map(|attr| attr.share())
-            .collect()
+    fn compute_acceleration(obj_mass: Mass, location: &Vector, attractors: Attractors) -> Result<Vector> {
+        let mut acceleration = Vector::zeros();
+
+        let attractors = shared_access![attractors];
+        for attractor in attractors.values() {
+            let attractor = shared_access![attractor];
+    
+            let mut dir = attractor.location() - *location;
+            let distance = dir.norm();
+    
+            dir.unscale_mut(distance);
+    
+            let distance2 = distance * distance;
+            let attr_mass = attractor.mass();
+            let gravity_coeff = attractor.gravity_coeff();
+            
+            let mut attr_acceleration = dir;
+            attr_acceleration.scale_mut(gravity_coeff * attr_mass);
+            attr_acceleration.unscale_mut(obj_mass * distance2);
+    
+            acceleration += attr_acceleration;
+        }
+    
+        Ok(acceleration)
     }
-}
-
-fn compute_acceleration(obj_mass: Mass, location: &Vector, attractors: &Vec<Shared<Attractor>>) -> Result<Vector> {
-    let mut acceleration = Vector::zeros();
-    for attractor in attractors.iter() {
-        let attractor = shared_access![attractor];
-
-        let mut dir = attractor.location() - *location;
-        let distance = dir.norm();
-
-        dir.unscale_mut(distance);
-
-        let distance2 = distance * distance;
-        let attr_mass = attractor.mass();
-        let gravity_coeff = attractor.gravity_coeff();
-        
-        let mut attr_acceleration = dir;
-        attr_acceleration.scale_mut(gravity_coeff * attr_mass);
-        attr_acceleration.unscale_mut(obj_mass * distance2);
-
-        acceleration += attr_acceleration;
-    }
-
-    Ok(acceleration)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -506,7 +558,6 @@ struct TrackPart {
     object_id: ObjectId,
     object: Shared<Object4d>,
     last_node: Shared<TrackNode>,
-    add_node: fn(&mut Track, TrackNode),
     old_atom: TrackAtom,
     old_time: RelativeTime,
     new_atom: TrackAtom,
@@ -518,7 +569,6 @@ impl TrackPart {
         object_id: ObjectId,
         object: Shared<Object4d>,
         last_node: Shared<TrackNode>,
-        add_node: fn(&mut Track, TrackNode),
         old_atom: TrackAtom, 
         old_time: RelativeTime,
         new_atom: TrackAtom,
@@ -528,7 +578,6 @@ impl TrackPart {
             object_id,
             object, 
             last_node,
-            add_node,
             old_atom, 
             old_time,
             new_atom,
@@ -536,11 +585,14 @@ impl TrackPart {
         }
     }
 
-    pub fn add_new_node(self) -> Result<()> {
+    pub fn add_new_node<U>(self) -> Result<()> 
+    where
+        U: UncomputedTrack
+    {
         let mut object = shared_access![mut self.object];
         let track = object.track_mut();
 
-        (self.add_node)(track, self.new_atom.into());
+        <U as UncomputedTrack>::add_node(track, self.new_atom.into());
 
         Ok(())
     }

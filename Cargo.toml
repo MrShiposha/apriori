@@ -24,7 +24,6 @@ threadpool = "1.7.1"
 rusqlite = "*"
 postgres = "*"
 postgres-types = { version = "*", features=["derive"] }
-num_cpus = "*"
 time = "*"
 clap = "*"
 nalgebra = "*"
