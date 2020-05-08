@@ -1,11 +1,11 @@
 use {
     crate::{
         shared::Shared,
-        scene::{
-            Object4d,
-            physics::TimeDirection,
-        },
-        r#type::ObjectId,
+        scene::Object4d,
+        r#type::{
+            ObjectId,
+            TimeDirection,
+        }
     }
 };
 

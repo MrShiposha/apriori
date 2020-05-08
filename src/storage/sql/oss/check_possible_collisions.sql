@@ -4,7 +4,9 @@ SELECT +object_id,
     z_min, z_max,
     t_min, t_max,
     +bvx, +bvy, +bvz,
-    +evx, +evy, +evz
+    +evx, +evy, +evz,
+    +cube_size,
+    +location_info
 FROM
     occupied_space
 WHERE

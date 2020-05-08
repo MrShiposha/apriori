@@ -31,6 +31,12 @@ const MINS_IN_HOUR: RawTime = 60;
 const SECS_IN_MIN: RawTime = 60;
 const MILLIS_IN_SEC: RawTime = 1000;
 
+#[derive(Debug, Clone, Copy)]
+pub enum TimeDirection {
+    Forward,
+    Backward,
+}
+
 pub trait AsRelativeTime {
     fn as_relative_time(&self) -> RelativeTime;
 }

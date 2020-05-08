@@ -1,46 +1,50 @@
 use std::{
     fmt,
     hash::{Hash, Hasher},
-    sync::{Arc, LockResult, RwLock, RwLockReadGuard, RwLockWriteGuard},
+    sync::{Arc, Weak, LockResult, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
 
 const LOG_TARGET: &'static str = "shared";
 
 #[derive(Default)]
-pub struct Shared<T: ?Sized> {
-    inner: Arc<RwLock<T>>,
-}
+pub struct Shared<T: ?Sized>(Arc<RwLock<T>>);
 
-impl<T> Shared<T> {
+impl<T: ?Sized> Shared<T> {
     pub fn new() -> Self
     where
         T: Default,
     {
-        Self {
-            inner: Arc::new(RwLock::new(T::default())),
-        }
+        Self(Arc::new(RwLock::new(T::default())))
     }
 
     pub fn share(&self) -> Self {
-        Self {
-            inner: Arc::clone(&self.inner),
-        }
+        Self(Arc::clone(&self.0))
+    }
+
+    pub fn share_weak(&self) -> SharedWeak<T> {
+        SharedWeak(Arc::downgrade(&self.0))
     }
 
     pub fn read(&self) -> LockResult<RwLockReadGuard<T>> {
-        self.inner.read()
+        self.0.read()
     }
 
     pub fn write(&self) -> LockResult<RwLockWriteGuard<T>> {
-        self.inner.write()
+        self.0.write()
     }
 }
 
 impl<T> Clone for Shared<T> {
     fn clone(&self) -> Self {
-        Self {
-            inner: Arc::clone(&self.inner),
-        }
+        Self(Arc::clone(&self.0))
+    }
+}
+
+pub struct SharedWeak<T: ?Sized>(Weak<RwLock<T>>);
+
+impl<T: ?Sized> SharedWeak<T> {
+    pub fn upgrade(&self) -> Option<Shared<T>> {
+        self.0.upgrade().map(|inner| Shared(inner))
     }
 }
 
@@ -80,9 +84,7 @@ pub fn handle_access_error<E, R, H: FnOnce(E) -> R>(err: E, handler: H) -> R {
 
 impl<T> From<T> for Shared<T> {
     fn from(from: T) -> Self {
-        Self {
-            inner: Arc::new(RwLock::new(from)),
-        }
+        Self(Arc::new(RwLock::new(from)))
     }
 }
 

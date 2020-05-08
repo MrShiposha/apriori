@@ -1,15 +1,13 @@
 use {
-    std::{
-        ops::Range,
-        sync::{Mutex, Weak},
-    },
+    std::ops::Range,
     crate::{
         make_error,
         r#type::{
             Vector,
             RawTime,
             RelativeTime,
-            AsRelativeTime
+            AsRelativeTime,
+            TimeDirection,
         },
         math::hermite_interpolation,
         scene::{
@@ -20,7 +18,10 @@ use {
             Object4d, 
             TruncateRange
         },
-        shared::Shared,
+        shared::{
+            Shared,
+            SharedWeak,
+        },
         Result,
     },
 };
@@ -88,6 +89,46 @@ impl SpaceTimeAtom<'_> {
         SpaceTimeAtom::<'atom> { track_atom, time }
     }
 }
+
+pub struct Composition {
+    nodes: Vec<CompositionNode>
+}
+
+impl Composition {
+    pub fn time_range(&self, anchor_time: chrono::Duration) -> Range<chrono::Duration> {
+        Range {
+            start: anchor_time,
+            end: self.nodes.last()
+                .map(|node| match node {
+                    CompositionNode::Collision(collision) => collision.when,
+                    CompositionNode::Atom(_) => unreachable!(),
+                }).unwrap_or(anchor_time)
+        }
+    }
+}
+
+impl From<CompositionNode> for Composition {
+    fn from(node: CompositionNode) -> Self {
+        Self {
+            nodes: vec![node]
+        }
+    }
+}
+
+pub enum CompositionNode {
+    Atom(TrackAtom),
+    Collision(Collision)
+}
+
+pub struct Collision {
+    colliding_object: SharedWeak<Object4d>,
+    when: chrono::Duration,
+    time_direction: TimeDirection,
+    track_atom: TrackAtom,
+}
+
+///////////////////
+
 
 pub enum Composite {
     Collision(CollisionList),
@@ -174,12 +215,6 @@ impl From<TrackAtom> for TrackNode {
     fn from(atom: TrackAtom) -> Self {
         Self::Atom(atom)
     }
-}
-
-pub struct Collision {
-    with: Weak<Mutex<Object4d>>,
-    when: chrono::Duration,
-    track_atom: TrackAtom,
 }
 
 pub struct CollisionList {

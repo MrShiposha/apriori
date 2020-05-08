@@ -17,6 +17,7 @@ use {
             track::{
                 TrackNode,
                 TrackAtom,
+                Collision
             }
         },
         r#type::{
@@ -31,11 +32,16 @@ use {
             TimeFormat,
             RelativeTime,
             AsRelativeTime,
+            TimeDirection,
         },
         storage::{
             StorageManager,
             OccupiedSpacesStorage,
             OccupiedSpace,
+        },
+        math::{
+            ranged_secant,
+            hermite_interpolation,
         },
         shared::Shared,
         Result
@@ -479,14 +485,16 @@ impl Engine {
             };
 
             // TODO resolve collisions
-            for possible_collision in possible_collisions.iter() {
+            if let Some((colliding_obj_id, collision_time)) = Self::clarify_earlest_collision(
+                &occupied_space, 
+                possible_collisions
+            ) {
                 info! {
                     target: LOG_TARGET,
-                    "possible collision detected [OID#{} w/ OID#{}], t ∈ [{}, {})",
-                    track_part.object_id,
-                    possible_collision.object_id,
-                    possible_collision.t_min,
-                    possible_collision.t_max,
+                    "collision detected: [OID#{} w/ OID#{}], t = {}",
+                    occupied_space.object_id,
+                    colliding_obj_id,
+                    collision_time
                 }
             }
 
@@ -546,12 +554,82 @@ impl Engine {
     
         Ok(acceleration)
     }
-}
 
-#[derive(Debug, Clone, Copy)]
-pub enum TimeDirection {
-    Forward,
-    Backward,
+    // Returns colliding object id and the collision time
+    fn clarify_earlest_collision(obj_occupied_space: &OccupiedSpace, possible_collisions: Vec<OccupiedSpace>) -> Option<(ObjectId, RelativeTime)> {
+        const EPS: f32 = 0.0001;
+        let obj_t_min = obj_occupied_space.t_min;
+        let obj_t_max = obj_occupied_space.t_max; 
+        let (obj_loc_begin, obj_loc_end) = obj_occupied_space.restore_locations();
+        let obj_vel_begin = obj_occupied_space.begin_velocity;
+        let obj_vel_end = obj_occupied_space.end_velocity;
+        let obj_radius = obj_occupied_space.cube_size;
+
+        let mut collision = None;
+
+        for possible_collision in possible_collisions.iter() {
+            info! {
+                target: LOG_TARGET,
+                "possible collision detected [OID#{} w/ OID#{}], t ∈ [{}, {})",
+                obj_occupied_space.object_id,
+                possible_collision.object_id,
+                possible_collision.t_min,
+                possible_collision.t_max,
+            }
+
+            let colliding_t_min = possible_collision.t_min;
+            let colliding_t_max = possible_collision.t_max;
+
+            let (colliding_loc_begin, colliding_loc_end) = possible_collision.restore_locations();
+            let colliding_vel_begin = possible_collision.begin_velocity;
+            let colliding_vel_end = possible_collision.end_velocity;
+            let colliding_radius = possible_collision.cube_size;
+
+            let collision_distance = obj_radius + colliding_radius;
+            let t_min = obj_t_min.max(colliding_t_min);
+            let t_max = obj_t_max.min(colliding_t_max);
+
+            if let Some(new_collision_time) = ranged_secant(
+                t_min..t_max, 
+                EPS, 
+                |t| {
+                    let obj_location = hermite_interpolation(
+                        &obj_loc_begin, 
+                        &obj_vel_begin, 
+                        obj_t_min, 
+                        &obj_loc_end, 
+                        &obj_vel_end, 
+                        obj_t_max, 
+                        t
+                    );
+
+                    let colliding_location = hermite_interpolation(
+                        &colliding_loc_begin, 
+                        &colliding_vel_begin, 
+                        colliding_t_min, 
+                        &colliding_loc_end, 
+                        &colliding_vel_end, 
+                        colliding_t_max, 
+                        t
+                    );
+
+                    let distance = (colliding_location - obj_location).norm();
+
+                    distance - collision_distance
+                }
+            ) {
+                match collision {
+                    Some((_, old_collision_time)) if old_collision_time > new_collision_time => {
+                        collision = Some((possible_collision.object_id, new_collision_time));
+                    },
+                    None => collision = Some((possible_collision.object_id, new_collision_time)),
+                    _ => {}
+                }
+            }
+        }
+
+        collision
+    }
 }
 
 struct TrackPart {

@@ -1,6 +1,10 @@
-use super::r#type::{
-    Vector,
-    RelativeTime
+use {
+    std::ops::Range,
+    super::r#type::{
+        Vector,
+        RelativeTime,
+        Distance,
+    }
 };
 
 pub fn hermite_interpolation(
@@ -28,4 +32,38 @@ pub fn hermite_interpolation(
     let m1 = velocity_1.scale((t3 - t2) * step);
 
     p0 + m0 + p1 + m1
+}
+
+pub fn ranged_secant(
+    valid_range: Range<RelativeTime>,
+    eps: f32,
+    f: impl Fn(RelativeTime) -> Distance
+) -> Option<RelativeTime> {
+    let mut min = valid_range.start;
+    let mut max = valid_range.end;
+    
+    let mut diff = max - min;
+    let mut f_min = f(min);
+    let mut f_max = f(max);
+    let mut scale = diff / (f_max - f_min);
+
+    while diff.abs() > eps {
+        min = max - scale * f_max;
+        max = min + scale * f_min;
+        diff = max - min;
+        f_min = f(min);
+        f_max = f(max);
+
+        scale = diff / (f_max - f_min);
+
+        if !valid_range.contains(&max) {
+            return None;
+        }
+    }
+
+    if f_max.abs() <= eps {
+        Some(max)
+    } else {
+        None
+    }
 }
