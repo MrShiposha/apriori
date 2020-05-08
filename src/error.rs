@@ -71,6 +71,8 @@ pub enum Storage {
     OccupiedSpacesStorageInit(rusqlite::Error),
     AddOccupiedSpace(rusqlite::Error),
     CheckPossibleCollisions(rusqlite::Error),
+    DeleteFutureOccupiedSpace(rusqlite::Error),
+    DeletePastOccupiedSpace(rusqlite::Error),
     ReadOccupiedSpace(rusqlite::Error),
 }
 
@@ -253,6 +255,8 @@ impl fmt::Display for Storage {
             Self::OccupiedSpacesStorageInit(err) => write!(f, "unable to init OSS: {}", err),
             Self::AddOccupiedSpace(err) => write!(f, "unable to add occupied space: {}", err),
             Self::CheckPossibleCollisions(err) => write!(f, "unable to check possible collisions: {}", err),
+            Self::DeleteFutureOccupiedSpace(err) => write!(f, "unable to delete future occupied spaces: {}", err),
+            Self::DeletePastOccupiedSpace(err) => write!(f, "unable to delete past occupied spaces: {}", err),
             Self::ReadOccupiedSpace(err) => write!(f, "unable to read occupied space: {}", err),
         }
     }

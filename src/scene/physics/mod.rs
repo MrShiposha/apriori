@@ -32,6 +32,7 @@ use {
             TimeFormat,
             RelativeTime,
             AsRelativeTime,
+            AsAbsoluteTime,
             TimeDirection,
         },
         storage::{
@@ -65,6 +66,7 @@ pub struct Engine {
     objects: Objects,
     attractors: Attractors,
     master_storage: StorageManager,
+    oss: OccupiedSpacesStorage,
     session_id: SessionId,
     thread_pool: ThreadPool,
     task_sender: mpsc::Sender<Task>,
@@ -87,6 +89,7 @@ impl Engine {
             objects: Shared::new(),
             attractors: Shared::new(),
             master_storage,
+            oss: oss.clone(),
             session_id,
             thread_pool: ThreadPool::default(),
             task_sender,
@@ -262,14 +265,21 @@ impl Engine {
                 if rt.is_nan() || rt > self.upper_update_time_threshold() {
                     compute_direction = TimeDirection::Forward;
                     track.truncate(..border_time);
+                    self.oss.delete_past_occupied_space(*id, border_time.as_relative_time())?;
 
                     log_update!(id, border_time => future);
                 } else {
                     compute_direction = TimeDirection::Backward;
 
-                    // LOOK AT THE PAPER PICTURE
+                    // An addition of `track.compute_step()` is necessary, 
+                    // because of track internal structure.
+                    //
+                    // Without the addition, the `rt` variable will be greater than 0.75,
+                    // that will initiate computing to /future/, what is not desirable
                     let border_time = border_time + *track.compute_step();
+
                     track.truncate(border_time..);
+                    self.oss.delete_future_occupied_space(*id, border_time.as_relative_time())?;
 
                     log_update!(id, border_time => past);
                 }
@@ -494,7 +504,7 @@ impl Engine {
                     "collision detected: [OID#{} w/ OID#{}], t = {}",
                     occupied_space.object_id,
                     colliding_obj_id,
-                    collision_time
+                    TimeFormat::VirtualTimeShort(collision_time.as_absolute_time())
                 }
             }
 
@@ -573,8 +583,8 @@ impl Engine {
                 "possible collision detected [OID#{} w/ OID#{}], t ∈ [{}, {})",
                 obj_occupied_space.object_id,
                 possible_collision.object_id,
-                possible_collision.t_min,
-                possible_collision.t_max,
+                TimeFormat::VirtualTimeShort(possible_collision.t_min.as_absolute_time()),
+                TimeFormat::VirtualTimeShort(possible_collision.t_max.as_absolute_time()),
             }
 
             let colliding_t_min = possible_collision.t_min;

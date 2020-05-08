@@ -49,6 +49,16 @@ impl AsRelativeTime for chrono::Duration {
     }
 }
 
+pub trait AsAbsoluteTime {
+    fn as_absolute_time(&self) -> chrono::Duration;
+}
+
+impl AsAbsoluteTime for RelativeTime {
+    fn as_absolute_time(&self) -> chrono::Duration {
+        chrono::Duration::milliseconds((*self * 1000.0) as RawTime)
+    }
+}
+
 pub enum TimeFormat {
     VirtualTimeLong(chrono::Duration),
     VirtualTimeShort(chrono::Duration),

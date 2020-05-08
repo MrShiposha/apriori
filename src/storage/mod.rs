@@ -198,6 +198,34 @@ impl OccupiedSpacesStorage {
 
         Ok(possible_collisions)
     }
+
+    pub fn delete_future_occupied_space(&self, object_id: ObjectId, t_min: RelativeTime) -> Result<()> {
+        let connection = self.pool.get()?;
+        let mut stmt = connection.prepare_cached(include_str![
+            "sql/oss/delete_future_occupied_space.sql"
+        ]).map_err(|err| make_error![Error::Storage::DeleteFutureOccupiedSpace(err)])?;
+
+        stmt.execute(rusqlite::params![
+            object_id,
+            t_min as f64
+        ]).map_err(|err| make_error![Error::Storage::DeleteFutureOccupiedSpace(err)])?;
+
+        Ok(())
+    }
+
+    pub fn delete_past_occupied_space(&self, object_id: ObjectId, t_max: RelativeTime) -> Result<()> {
+        let connection = self.pool.get()?;
+        let mut stmt = connection.prepare_cached(include_str![
+            "sql/oss/delete_past_occupied_space.sql"
+        ]).map_err(|err| make_error![Error::Storage::DeletePastOccupiedSpace(err)])?;
+
+        stmt.execute(rusqlite::params![
+            object_id,
+            t_max as f64
+        ]).map_err(|err| make_error![Error::Storage::DeletePastOccupiedSpace(err)])?;
+
+        Ok(())
+    }
 }
 
 pub struct OccupiedSpace {
