@@ -7,17 +7,20 @@ use {
     log::{
         trace,
         info,
+        warn,
         error,
     },
     crate::{
         shared_access,
+        make_error,
         scene::{
             Object4d,
             Attractor,
             track::{
                 TrackNode,
                 TrackAtom,
-                Collision
+                Collision,
+                CanceledCollisions,
             }
         },
         r#type::{
@@ -28,6 +31,7 @@ use {
             ObjectName,
             AttractorId,
             AttractorName,
+            Distance,
             Mass,
             TimeFormat,
             RelativeTime,
@@ -51,9 +55,11 @@ use {
 
 mod uncomputed;
 mod task;
+mod collision;
 
 use uncomputed::*;
 use task::Task;
+use collision::CollisionDescriptor;
 
 const LOG_TARGET: &'static str = "engine";
 
@@ -160,6 +166,8 @@ impl Engine {
             self.session_id, 
             &object,
         )?;
+
+        object.set_id(id);
 
         let object = Shared::from(object);
         shared_access![mut self.objects].insert(id, object.share());
@@ -276,7 +284,7 @@ impl Engine {
                     //
                     // Without the addition, the `rt` variable will be greater than 0.75,
                     // that will initiate computing to /future/, what is not desirable
-                    let border_time = border_time + *track.compute_step();
+                    let border_time = border_time + track.compute_step();
 
                     track.truncate(border_time..);
                     self.oss.delete_future_occupied_space(*id, border_time.as_relative_time())?;
@@ -302,9 +310,10 @@ impl Engine {
         std::thread::spawn({
             let thread_pool = self.thread_pool.clone();
             let attractors = self.attractors.share();
+            let objects = self.objects.share();
 
             move || {
-                Self::computational_thread(thread_pool, oss, attractors, task_receiver)
+                Self::computational_thread(thread_pool, oss, task_receiver, objects, attractors)
             }
         });
     }
@@ -312,8 +321,9 @@ impl Engine {
     fn computational_thread(
         thread_pool: ThreadPool, 
         oss: OccupiedSpacesStorage,
+        task_receiver: mpsc::Receiver<Task>,
+        objects: Objects,
         attractors: Attractors, 
-        task_receiver: mpsc::Receiver<Task>
     ) {
         let (forward_task_sender, forward_task_receiver) = mpsc::channel();
         let (backward_task_sender, backward_task_receiver) = mpsc::channel();
@@ -322,12 +332,14 @@ impl Engine {
             let thread_pool = thread_pool.clone();
             let oss = oss.clone();
             let attractors = attractors.share();
+            let objects = objects.share();
 
             move || {
                 Self::process_uncomputed::<ForwardUncomputedTrack>(
                     thread_pool, 
                     oss,
                     forward_task_receiver, 
+                    objects,
                     attractors
                 )
             }
@@ -338,6 +350,7 @@ impl Engine {
                 thread_pool, 
                 oss,
                 backward_task_receiver, 
+                objects,
                 attractors
             )
         });
@@ -359,31 +372,32 @@ impl Engine {
         thread_pool: ThreadPool, 
         oss: OccupiedSpacesStorage,
         task_receiver: mpsc::Receiver<Task>,
+        objects: Objects,
         attractors: Attractors
     )
     where
         U: UncomputedTrack
     {
-        let mut objects = vec![];
+        let mut uncomputed_objects = vec![];
         let mut remaining = vec![];
 
         loop {
             let (track_parts_sender, track_parts_receiver) = mpsc::channel();
 
-            if objects.is_empty() {
+            if uncomputed_objects.is_empty() {
                 let task = match task_receiver.recv() {
                     Ok(task) => task,
                     Err(_) => return
                 };
 
-                objects = task.objects;
+                uncomputed_objects = task.objects;
             }
 
             while let Ok(mut task) = task_receiver.try_recv() {
-                objects.append(&mut task.objects);
+                uncomputed_objects.append(&mut task.objects);
             }
 
-            while let Some((obj_id, object)) = objects.pop() {
+            while let Some((obj_id, object)) = uncomputed_objects.pop() {
                 if shared_access![object].track().is_fully_computed() {
                     shared_access![mut object].reset_computing();
                 } else {
@@ -399,20 +413,18 @@ impl Engine {
                     thread_pool.execute(move || {
                         let mut sync_object = shared_access![mut object];
                         let obj_mass = sync_object.mass();
+                        let obj_radius = sync_object.radius();
 
                         let track = sync_object.track_mut();
 
                         let node = <U as UncomputedTrack>::last_node(track);
-                        let sync_node = shared_access![node];
 
                         let time = <U as UncomputedTrack>::last_time(track);
                         let new_time = <U as UncomputedTrack>::new_time(track);
 
-                        let atom = <U as UncomputedTrack>::last_atom(&sync_node);
-
                         let step = <U as UncomputedTrack>::time_step(track);
 
-                        let mut new_atom = atom.at_next_location(step);
+                        let mut new_atom = node.at_next_location(step);
 
                         match Self::atom_set_velocity(
                             obj_mass, 
@@ -424,8 +436,8 @@ impl Engine {
                                 let track_part = TrackPart::new(
                                     obj_id,
                                     object.share(),
-                                    node.share(),
-                                    atom.clone(), 
+                                    obj_radius,
+                                    node.clone(), 
                                     time,
                                     new_atom,
                                     new_time
@@ -448,30 +460,28 @@ impl Engine {
             // If not, the `process_track_parts` will hang.
             std::mem::drop(track_parts_sender);
 
-            std::mem::swap(&mut objects, &mut remaining);
+            std::mem::swap(&mut uncomputed_objects, &mut remaining);
 
-            Self::process_track_parts::<U>(&oss, track_parts_receiver);
+            Self::process_track_parts::<U>(
+                &oss, 
+                track_parts_receiver,
+                &objects,
+                &attractors,
+            );
         }
     }
 
-    fn process_track_parts<U>(oss: &OccupiedSpacesStorage, track_parts_receiver: mpsc::Receiver<TrackPart>) 
+    fn process_track_parts<U>(
+        oss: &OccupiedSpacesStorage, 
+        track_parts_receiver: mpsc::Receiver<TrackPart>,
+        objects: &Objects, 
+        attractors: &Attractors,
+    ) 
     where
         U: UncomputedTrack
     {
-        while let Ok(track_part) = track_parts_receiver.recv() {
-            let occupied_space = match track_part.get_occupied_space() {
-                Ok(os) => os,
-                Err(err) => {
-                    error! {
-                        target: LOG_TARGET,
-                        "unable to get occupied space from the new track part (OID#{}): {}",
-                        track_part.object_id,
-                        err
-                    };
-
-                    continue;
-                }
-            };
+        while let Ok(mut track_part) = track_parts_receiver.recv() {
+            let mut occupied_space = track_part.get_occupied_space();
 
             trace! {
                 target: LOG_TARGET,
@@ -480,7 +490,7 @@ impl Engine {
                 occupied_space
             }
 
-            let possible_collisions = match oss.check_possible_collisions(&occupied_space) {
+            let mut possible_collisions = match oss.check_possible_collisions(&occupied_space) {
                 Ok(possible_collisions) => possible_collisions,
                 Err(err) => {
                     error! {
@@ -494,36 +504,66 @@ impl Engine {
                 }
             };
 
-            // TODO resolve collisions
-            if let Some((colliding_obj_id, collision_time)) = Self::clarify_earlest_collision(
+            // use crate::shared_access;
+
+            // lazy_static::lazy_static! {
+            //     static ref FIRST_TIME: Shared<bool> = true.into();
+            // }
+
+            // if !*shared_access![FIRST_TIME] {
+            //     possible_collisions.clear();
+            // }
+
+            if let Some(collision_descriptor) = Self::clarify_earlest_collision(
                 &occupied_space, 
                 possible_collisions
             ) {
+                // *shared_access![mut FIRST_TIME] = false;
+                
                 info! {
                     target: LOG_TARGET,
                     "collision detected: [OID#{} w/ OID#{}], t = {}",
                     occupied_space.object_id,
-                    colliding_obj_id,
-                    TimeFormat::VirtualTimeShort(collision_time.as_absolute_time())
+                    collision_descriptor.colliding_object_id,
+                    TimeFormat::VirtualTimeShort(collision_descriptor.collision_time.as_absolute_time())
+                }
+
+                match shared_access![objects].get(&collision_descriptor.colliding_object_id) {
+                    Some(colliding_obj) => {
+                        let colliding_object_id = collision_descriptor.colliding_object_id;
+                        let collision_time = collision_descriptor.collision_time.as_absolute_time();
+
+                        if let Err(err) = Self::resolve_collision::<U>(
+                            oss,
+                            &mut track_part,
+                            colliding_obj,
+                            collision_descriptor,
+                            attractors,
+                        ) {
+                            error! {
+                                target: LOG_TARGET,
+                                "unable to resolve collision [OID#{} w/ OID#{}], t = {}: {}",
+                                occupied_space.object_id,
+                                colliding_object_id,
+                                TimeFormat::VirtualTimeShort(collision_time),
+                                err
+                            }
+                        }
+
+                        occupied_space = track_part.get_occupied_space();
+                    }
+                    None => warn! {
+                        target: LOG_TARGET,
+                        "colliding object (OID#{}) is lost", collision_descriptor.colliding_object_id
+                    }
                 }
             }
 
-            if let Err(err) = oss.add_occupied_space(occupied_space) {
-                error! {
-                    target: LOG_TARGET,
-                    "unable to add new occupied space to OccupiedSpacesStorage (OID#{}): {}",
-                    track_part.object_id,
-                    err
-                };
-
-                continue;
-            }
-
             let object_id = track_part.object_id;
-            if let Err(err) = track_part.add_new_node::<U>() {
-                error! {
+            if let Err(err) = track_part.add_new_node::<U>(&oss, occupied_space) {
+                warn! {
                     target: LOG_TARGET,
-                    "unable to add new track node to the object (id: {}): {}", 
+                    "unable to add new track node to the object (OID#{}): {}", 
                     object_id, 
                     err
                 };
@@ -532,14 +572,14 @@ impl Engine {
     }
 
     fn atom_set_velocity(obj_mass: Mass, atom: &mut TrackAtom, step: RelativeTime, attractors: Attractors) -> Result<()> {
-        let mut acceleration = Self::compute_acceleration(obj_mass, atom.location(), attractors)?;
+        let mut acceleration = Self::compute_acceleration(obj_mass, atom.location(), &attractors)?;
         acceleration.scale_mut(step);
         atom.set_velocity(atom.velocity() + acceleration);
 
         Ok(())
     }
 
-    fn compute_acceleration(obj_mass: Mass, location: &Vector, attractors: Attractors) -> Result<Vector> {
+    fn compute_acceleration(obj_mass: Mass, location: &Vector, attractors: &Attractors) -> Result<Vector> {
         let mut acceleration = Vector::zeros();
 
         let attractors = shared_access![attractors];
@@ -566,7 +606,7 @@ impl Engine {
     }
 
     // Returns colliding object id and the collision time
-    fn clarify_earlest_collision(obj_occupied_space: &OccupiedSpace, possible_collisions: Vec<OccupiedSpace>) -> Option<(ObjectId, RelativeTime)> {
+    fn clarify_earlest_collision(obj_occupied_space: &OccupiedSpace, possible_collisions: Vec<OccupiedSpace>) -> Option<CollisionDescriptor> {
         const EPS: f32 = 0.0001;
         let obj_t_min = obj_occupied_space.t_min;
         let obj_t_max = obj_occupied_space.t_max; 
@@ -575,7 +615,7 @@ impl Engine {
         let obj_vel_end = obj_occupied_space.end_velocity;
         let obj_radius = obj_occupied_space.cube_size;
 
-        let mut collision = None;
+        let mut collision: Option<CollisionDescriptor> = None;
 
         for possible_collision in possible_collisions.iter() {
             info! {
@@ -599,7 +639,7 @@ impl Engine {
             let t_min = obj_t_min.max(colliding_t_min);
             let t_max = obj_t_max.min(colliding_t_max);
 
-            if let Some(new_collision_time) = ranged_secant(
+            if let Some((collision_time, object_location, colliding_object_location)) = ranged_secant(
                 t_min..t_max, 
                 EPS, 
                 |t| {
@@ -625,14 +665,24 @@ impl Engine {
 
                     let distance = (colliding_location - obj_location).norm();
 
-                    distance - collision_distance
+                    (distance - collision_distance, obj_location, colliding_location)
                 }
             ) {
                 match collision {
-                    Some((_, old_collision_time)) if old_collision_time > new_collision_time => {
-                        collision = Some((possible_collision.object_id, new_collision_time));
+                    Some(descriptor) if descriptor.collision_time > collision_time => {
+                        collision = Some(CollisionDescriptor {
+                            object_location,
+                            colliding_object_location,
+                            colliding_object_id: possible_collision.object_id,
+                            collision_time,
+                        });
                     },
-                    None => collision = Some((possible_collision.object_id, new_collision_time)),
+                    None => collision = Some(CollisionDescriptor {
+                        object_location,
+                        colliding_object_location,
+                        colliding_object_id: possible_collision.object_id,
+                        collision_time,
+                    }),
                     _ => {}
                 }
             }
@@ -640,15 +690,172 @@ impl Engine {
 
         collision
     }
+
+    fn resolve_collision<U>(
+        oss: &OccupiedSpacesStorage,
+        track_part: &mut TrackPart, 
+        colliding_obj: &Shared<Object4d>, 
+        collision_descriptor: CollisionDescriptor,
+        attractors: &Attractors,
+    ) -> Result<()>
+    where
+        U: UncomputedTrack
+    {
+        let collision_time = collision_descriptor.collision_time.as_absolute_time();
+        let object_mass = shared_access![track_part.object].mass();
+        let object_location = collision_descriptor.object_location;
+
+        let colliding_object_mass = shared_access![colliding_obj].mass();
+        let colliding_object_location = collision_descriptor.colliding_object_location;
+
+        let object_velocity = Self::compute_acceleration(
+            object_mass, 
+            &object_location, 
+            attractors
+        )?;
+
+        let colliding_object_velocity = Self::compute_acceleration(
+            colliding_object_mass, 
+            &colliding_object_location, 
+            attractors
+        )?;
+
+        let collision_direction = (colliding_object_location - object_location).normalize();
+        
+        let (
+            mut object_normal_velocity, 
+            object_tangent_velocity
+        ) = Self::collision_velocity_components(
+            collision_direction, 
+            object_velocity
+        );
+
+        let (
+            mut colliding_object_normal_velocity, 
+            colliding_object_tangent_velocity
+        ) = Self::collision_velocity_components(
+            collision_direction, 
+            colliding_object_velocity
+        );
+
+        let obj_normal_velocity_len = collision_direction.dot(&object_normal_velocity);
+        let col_normal_velocity_len = collision_direction.dot(&colliding_object_normal_velocity);
+        let len_diff = obj_normal_velocity_len - col_normal_velocity_len;
+        let mass_sum = object_mass + colliding_object_mass;
+
+        object_normal_velocity = collision_direction.scale(
+            obj_normal_velocity_len - 2.0 * len_diff * colliding_object_mass / mass_sum 
+        );
+
+        colliding_object_normal_velocity = collision_direction.scale(
+            col_normal_velocity_len + 2.0 * len_diff * object_mass / mass_sum
+        );
+
+        let src_atom = match track_part.new_node {
+            TrackNode::Atom(ref atom) => atom.clone(),
+            _ => unreachable!()
+        };
+
+        let object_velocity = src_atom.velocity() + object_tangent_velocity + object_normal_velocity;
+        let colliding_object_velocity = colliding_object_tangent_velocity + colliding_object_normal_velocity;
+
+        track_part.new_node = Collision::new(
+            colliding_obj.share_weak(), 
+            collision_time, 
+            <U as UncomputedTrack>::time_direction(), 
+            src_atom, 
+            TrackAtom::new(object_location, object_velocity),
+        ).into();
+
+        let canceled_collisions = shared_access![mut colliding_obj]
+            .track_mut()
+            .place_collision(
+                track_part.object.share_weak(),
+                collision_time,
+                <U as UncomputedTrack>::time_direction(),
+                TrackAtom::new(colliding_object_location, colliding_object_velocity)  
+            );
+
+        // TODO create new OS for colliding_object???
+
+        // Self::delete_canceled_occupied_spaces::<U>(oss, track_part.object_id, collision_time)?;
+        Self::delete_canceled_occupied_spaces::<U>(oss, collision_descriptor.colliding_object_id, collision_time)?;
+        Self::cancel_dependent_collisions::<U>(oss, canceled_collisions)?;
+            
+        Ok(())
+    }
+
+    fn collision_velocity_components(
+        collision_direction: Vector,
+        velocty: Vector
+    ) -> (Vector, Vector) {
+        let normal = collision_direction.scale(velocty.dot(&collision_direction));
+        let tangent = velocty - normal;
+
+        (normal, tangent)
+    }
+
+    fn cancel_dependent_collisions<'rb, U>(
+        oss: &OccupiedSpacesStorage,
+        mut canceled_collisions: CanceledCollisions,
+    ) -> Result<()> 
+    where
+        U: UncomputedTrack
+    {
+        let mut remaining = vec![];
+
+        while !canceled_collisions.is_empty() {
+            while let Some(collision) = canceled_collisions.pop() {
+                if let Some(object) = collision.colliding_object.upgrade() {
+                    let mut object = shared_access![mut object];
+                    let track = object.track_mut();
+
+                    let new_truncated = match collision.time_direction {
+                        TimeDirection::Forward => track.truncate(collision.when..),
+                        TimeDirection::Backward => track.truncate(..collision.when),
+                    };
+
+                    let mut canceled_collisions = new_truncated.filter_map(|node| match node {
+                        TrackNode::Collision(collision) => Some(collision.clone()),
+                        _ => None
+                    }).collect();
+
+                    remaining.append(&mut canceled_collisions);
+
+                    Self::delete_canceled_occupied_spaces::<U>(oss, object.id(), collision.when)?;
+                }
+            }
+
+            std::mem::swap(&mut canceled_collisions, &mut remaining);
+        }
+
+        Ok(())
+    }
+
+    fn delete_canceled_occupied_spaces<U>(
+        oss: &OccupiedSpacesStorage,
+        object_id: ObjectId,
+        from_when: chrono::Duration 
+    ) -> Result<()>
+    where 
+        U: UncomputedTrack 
+    {
+        let t = from_when.as_relative_time();
+
+        match <U as UncomputedTrack>::time_direction() {
+            TimeDirection::Forward => oss.delete_future_occupied_space(object_id, t),
+            TimeDirection::Backward => oss.delete_past_occupied_space(object_id, t),
+        }
+    }
 }
 
 struct TrackPart {
     object_id: ObjectId,
     object: Shared<Object4d>,
-    last_node: Shared<TrackNode>,
-    old_atom: TrackAtom,
+    object_radius: Distance,
+    old_node: TrackNode,
     old_time: RelativeTime,
-    new_atom: TrackAtom,
+    new_node: TrackNode,
     new_time: RelativeTime,
 }
 
@@ -656,8 +863,8 @@ impl TrackPart {
     pub fn new(
         object_id: ObjectId,
         object: Shared<Object4d>,
-        last_node: Shared<TrackNode>,
-        old_atom: TrackAtom, 
+        object_radius: Distance,
+        old_node: TrackNode, 
         old_time: RelativeTime,
         new_atom: TrackAtom,
         new_time: RelativeTime,
@@ -665,40 +872,59 @@ impl TrackPart {
         Self {
             object_id,
             object, 
-            last_node,
-            old_atom, 
+            object_radius,
+            old_node, 
             old_time,
-            new_atom,
+            new_node: new_atom.into(),
             new_time,
         }
     }
 
-    pub fn add_new_node<U>(self) -> Result<()> 
+    pub fn add_new_node<U>(
+        self, 
+        oss: &OccupiedSpacesStorage, 
+        occupied_space: OccupiedSpace
+    ) -> Result<()> 
     where
         U: UncomputedTrack
     {
         let mut object = shared_access![mut self.object];
         let track = object.track_mut();
 
-        <U as UncomputedTrack>::add_node(track, self.new_atom.into());
+        if U::last_time(track) == self.old_time {
+            oss.add_occupied_space(occupied_space)?;
 
-        Ok(())
+            <U as UncomputedTrack>::add_node(track, self.new_node);
+
+            Ok(())
+        } else {
+            Err(make_error![
+                Error::Physics::TrackPartIsNotAligned(
+                    object.name().clone(), 
+                    self.old_time..self.new_time
+                )
+            ])
+        }
+
     }
 
-    pub fn get_occupied_space(&self) -> Result<OccupiedSpace> {
-        let object_radius = shared_access![self.object].radius();
+    pub fn get_occupied_space(&self) -> OccupiedSpace {
+        let new_atom = match self.new_node {
+            TrackNode::Atom(ref atom) => atom,
+            TrackNode::Collision(ref collision) => &collision.track_atom,
+        };
 
         let os = OccupiedSpace::with_track_part(
             self.object_id, 
-            object_radius, 
-            self.old_atom.location(), 
+            self.object_radius, 
+            self.old_node.location(), 
             self.old_time, 
-            *self.old_atom.velocity(),
-            self.new_atom.location(), 
+            *self.old_node.velocity(),
+            new_atom.location(), 
             self.new_time,
-            *self.new_atom.velocity(),
+            *new_atom.velocity(),
         );
 
-        Ok(os)
+        os
     }
 }

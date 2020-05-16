@@ -37,32 +37,32 @@ pub fn hermite_interpolation(
 pub fn ranged_secant(
     valid_range: Range<RelativeTime>,
     eps: f32,
-    f: impl Fn(RelativeTime) -> Distance
-) -> Option<RelativeTime> {
+    f: impl Fn(RelativeTime) -> (Distance, Vector, Vector)
+) -> Option<(RelativeTime, Vector, Vector)> {
     let mut min = valid_range.start;
     let mut max = valid_range.end;
     
     let mut diff = max - min;
     let mut f_min = f(min);
     let mut f_max = f(max);
-    let mut scale = diff / (f_max - f_min);
+    let mut scale = diff / (f_max.0 - f_min.0);
 
     while diff.abs() > eps {
-        min = max - scale * f_max;
-        max = min + scale * f_min;
+        min = max - scale * f_max.0;
+        max = min + scale * f_min.0;
         diff = max - min;
         f_min = f(min);
         f_max = f(max);
 
-        scale = diff / (f_max - f_min);
+        scale = diff / (f_max.0 - f_min.0);
 
         if !valid_range.contains(&max) {
             return None;
         }
     }
 
-    if f_max.abs() <= eps {
-        Some(max)
+    if f_max.0.abs() <= eps {
+        Some((max, f_max.1, f_max.2))
     } else {
         None
     }

@@ -25,7 +25,7 @@ use {
             AddObject,
         },
         graphics::random_color,
-        scene::physics::Engine,
+        scene::engine::Engine,
         shared::Shared,
         r#type::{
             ObjectId,
@@ -40,7 +40,7 @@ mod object;
 pub mod track;
 mod attractor;
 mod ringbuffer;
-pub mod physics;
+pub mod engine;
 
 pub use object::Object4d;
 pub use attractor::Attractor;

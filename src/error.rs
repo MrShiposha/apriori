@@ -1,6 +1,6 @@
 use super::{
     message,
-    r#type::{ObjectName, AttractorName, TimeFormat},
+    r#type::{ObjectName, AttractorName, TimeFormat, RelativeTime, AsAbsoluteTime},
 };
 use std::fmt;
 use std::ops::Range;
@@ -87,6 +87,7 @@ pub enum Scene {
 #[derive(Debug)]
 pub enum Physics {
     Init(rusqlite::Error),
+    TrackPartIsNotAligned(ObjectName, Range<RelativeTime>),
 }
 
 impl From<std::io::Error> for Error {
@@ -301,6 +302,13 @@ impl fmt::Display for Physics {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Init(err) => write!(f, "unable to init physics: {}", err),
+            Self::TrackPartIsNotAligned(obj_name, range) => write! {
+                f, 
+                "[`{}`] a new track part [{} -> {}] is not aligned",
+                obj_name,
+                TimeFormat::VirtualTimeShort(range.start.as_absolute_time()),
+                TimeFormat::VirtualTimeShort(range.end.as_absolute_time()),
+            },
         }
     }
 }

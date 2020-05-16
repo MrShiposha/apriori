@@ -1,13 +1,17 @@
 use {
-    std::ops::Range,
+    std::ops::{
+        Range,
+        RangeBounds,
+    },
     crate::{
         make_error,
         r#type::{
             Vector,
+            TimeDirection,
             RawTime,
             RelativeTime,
             AsRelativeTime,
-            TimeDirection,
+            AsAbsoluteTime,
         },
         math::hermite_interpolation,
         scene::{
@@ -18,32 +22,34 @@ use {
             Object4d, 
             TruncateRange
         },
-        shared::{
-            Shared,
-            SharedWeak,
-        },
+        shared::SharedWeak,
         Result,
     },
 };
+
+pub type CanceledCollisions = Vec<Collision>;
 
 #[derive(Clone)]
 pub struct TrackAtom {
     location: Vector,
     velocity: Vector,
+    step: chrono::Duration,
 }
 
 impl TrackAtom {
     pub fn new(location: Vector, velocity: Vector) -> Self {
         Self {
             location,
-            velocity
+            velocity,
+            step: chrono::Duration::zero(),
         }
     }
 
     pub fn with_location(location: Vector) -> Self {
         Self {
             location,
-            velocity: Vector::zeros()
+            velocity: Vector::zeros(),
+            step: chrono::Duration::zero(),
         }
     }
 
@@ -58,7 +64,8 @@ impl TrackAtom {
     pub fn at_next_location(&self, step: RelativeTime) -> TrackAtom {
         TrackAtom {
             location: self.location + self.velocity * step,
-            velocity: self.velocity
+            velocity: self.velocity,
+            step: chrono::Duration::zero(),
         }
     }
 
@@ -72,135 +79,103 @@ impl Default for TrackAtom {
         Self {
             location: Vector::zeros(),
             velocity: Vector::zeros(),
+            step: chrono::Duration::zero(),
         }
     }
 }
 
 pub struct SpaceTimeAtom<'atom> {
     pub track_atom: &'atom TrackAtom,
-    pub time: &'atom chrono::Duration,
+    pub time: RelativeTime,
 }
 
 impl SpaceTimeAtom<'_> {
     pub fn new<'atom>(
         track_atom: &'atom TrackAtom,
-        time: &'atom chrono::Duration,
+        time: RelativeTime,
     ) -> SpaceTimeAtom<'atom> {
         SpaceTimeAtom::<'atom> { track_atom, time }
     }
 }
 
-pub struct Composition {
-    nodes: Vec<CompositionNode>
-}
-
-impl Composition {
-    pub fn time_range(&self, anchor_time: chrono::Duration) -> Range<chrono::Duration> {
-        Range {
-            start: anchor_time,
-            end: self.nodes.last()
-                .map(|node| match node {
-                    CompositionNode::Collision(collision) => collision.when,
-                    CompositionNode::Atom(_) => unreachable!(),
-                }).unwrap_or(anchor_time)
-        }
-    }
-}
-
-impl From<CompositionNode> for Composition {
-    fn from(node: CompositionNode) -> Self {
-        Self {
-            nodes: vec![node]
-        }
-    }
-}
-
-pub enum CompositionNode {
-    Atom(TrackAtom),
-    Collision(Collision)
-}
-
+#[derive(Clone)]
 pub struct Collision {
-    colliding_object: SharedWeak<Object4d>,
-    when: chrono::Duration,
-    time_direction: TimeDirection,
-    track_atom: TrackAtom,
+    pub colliding_object: SharedWeak<Object4d>,
+    pub when: chrono::Duration,
+    pub step: chrono::Duration,
+    pub back_step: chrono::Duration,
+    pub time_direction: TimeDirection,
+    pub src_track_atom: TrackAtom,
+    pub track_atom: TrackAtom,
 }
 
-///////////////////
-
-
-pub enum Composite {
-    Collision(CollisionList),
-}
-
-impl Composite {
-    fn atom_start(&self) -> &TrackAtom {
-        match self {
-            Composite::Collision(list) => &list.atom_start,
+impl Collision {
+    pub fn new(
+        colliding_object: SharedWeak<Object4d>,
+        when: chrono::Duration,
+        time_direction: TimeDirection,
+        src_track_atom: TrackAtom,
+        track_atom: TrackAtom,
+    ) -> Self {
+        Self {
+            colliding_object,
+            when,
+            step: chrono::Duration::zero(),
+            back_step: chrono::Duration::zero(),
+            time_direction,
+            src_track_atom,
+            track_atom,
         }
     }
 
-    fn atom_end(&self) -> &TrackAtom {
-        match self {
-            Composite::Collision(list) => &list.collisions.last().unwrap().track_atom,
-        }
-    }
-
-    fn time_start(&self) -> &chrono::Duration {
-        match self {
-            Composite::Collision(list) => &list.begin_time,
-        }
-    }
-
-    fn time_end(&self) -> &chrono::Duration {
-        match self {
-            Composite::Collision(list) => &list.collisions.last().unwrap().when,
-        }
-    }
-
-    fn contains_time(&self, vtime: &chrono::Duration) -> bool {
-        (self.time_start()..self.time_end()).contains(&vtime)
-    }
-
-    fn interpolate(&self, vtime: &chrono::Duration) -> Vector {
-        match self {
-            Composite::Collision(list) => list.interpolate(vtime),
+    pub fn at_next_location(&self, step: RelativeTime) -> TrackAtom {
+        TrackAtom {
+            location: self.track_atom.location + self.track_atom.velocity * step,
+            velocity: self.track_atom.velocity,
+            step: chrono::Duration::zero(),
         }
     }
 }
 
+#[derive(Clone)]
 pub enum TrackNode {
     Atom(TrackAtom),
-    Composite(Composite),
+    Collision(Collision),
 }
 
 impl TrackNode {
-    pub fn atom_start(&self) -> &TrackAtom {
+    pub fn location(&self) -> &Vector {
         match self {
-            TrackNode::Atom(atom) => atom,
-            TrackNode::Composite(composite) => composite.atom_start(),
+            TrackNode::Atom(atom) => atom.location(),
+            TrackNode::Collision(collision) => collision.track_atom.location(),
         }
     }
 
-    pub fn atom_end(&self) -> &TrackAtom {
+    pub fn velocity(&self) -> &Vector {
         match self {
-            TrackNode::Atom(atom) => atom,
-            TrackNode::Composite(composite) => composite.atom_end(),
+            TrackNode::Atom(atom) => atom.velocity(),
+            TrackNode::Collision(collision) => collision.track_atom.velocity(),
         }
     }
 
-    pub fn time_start(&self) -> Option<&chrono::Duration> {
+    pub fn at_next_location(&self, step: RelativeTime) -> TrackAtom {
         match self {
-            TrackNode::Atom(_) => None,
-            TrackNode::Composite(composite) => Some(composite.time_start()),
+            TrackNode::Atom(atom) => atom.at_next_location(step),
+            TrackNode::Collision(collision) => collision.at_next_location(step),
         }
     }
 
-    pub fn time_end(&self) -> Option<&chrono::Duration> {
+    pub fn step(&self) -> chrono::Duration {
         match self {
-            TrackNode::Atom(_) => None,
-            TrackNode::Composite(composite) => Some(composite.time_end()),
+            TrackNode::Atom(atom) => atom.step,
+            TrackNode::Collision(collision) => collision.step,
+        }
+    }
+
+    pub fn set_step(&mut self, step: chrono::Duration) {
+        match self {
+            TrackNode::Atom(atom) => atom.step = step,
+            TrackNode::Collision(collision) => collision.step = step,
         }
     }
 }
@@ -217,52 +192,16 @@ impl From<TrackAtom> for TrackNode {
     }
 }
 
-pub struct CollisionList {
-    atom_start: TrackAtom,
-    begin_time: chrono::Duration,
-    collisions: Vec<Collision>,
-}
-
-impl Default for CollisionList {
-    fn default() -> Self {
-        Self {
-            atom_start: TrackAtom::default(),
-            begin_time: chrono::Duration::zero(),
-            collisions: vec![],
-        }
-    }
-}
-
-impl CollisionList {
-    fn interpolate(&self, vtime: &chrono::Duration) -> Vector {
-        let first_collision = self.collisions.first().unwrap();
-        if *vtime < first_collision.when {
-            interpolate_track_part(
-                SpaceTimeAtom::new(&self.atom_start, &self.begin_time),
-                SpaceTimeAtom::new(&first_collision.track_atom, &first_collision.when),
-                vtime,
-            )
-        } else {
-            let node_index = self
-                .collisions
-                .binary_search_by_key(vtime, |collision| collision.when)
-                .unwrap();
-
-            let lhs = &self.collisions[node_index];
-            let rhs = &self.collisions[node_index + 1];
-
-            interpolate_track_part(
-                SpaceTimeAtom::new(&lhs.track_atom, &lhs.when),
-                SpaceTimeAtom::new(&rhs.track_atom, &rhs.when),
-                vtime,
-            )
-        }
+impl From<Collision> for TrackNode {
+    fn from(collision:Collision) -> Self {
+        Self::Collision(collision)
     }
 }
 
 pub struct Track {
-    nodes: RingBuffer<Shared<TrackNode>>,
+    nodes: RingBuffer<TrackNode>,
     time_start: chrono::Duration,
+    time_end: chrono::Duration,
     compute_step: chrono::Duration,
 }
 
@@ -271,6 +210,7 @@ impl Track {
         Self {
             nodes: RingBuffer::new(track_size),
             time_start: chrono::Duration::zero(),
+            time_end: chrono::Duration::zero(),
             compute_step,
         }
     }
@@ -281,55 +221,63 @@ impl Track {
             return Err(make_error![Error::Scene::UncomputedTrackPart(*vtime, computed_range)]);
         }
 
-        let relative_time = self.time_offset(vtime);
-        let node_index = self.node_index(vtime);
-        let lhs_node_time = chrono::Duration::milliseconds(
-            self.compute_step.num_milliseconds() * node_index as RawTime
-        ) + self.time_start;
+        let time_offset = self.time_offset(vtime);
 
-        let rhs_node_time = lhs_node_time + self.compute_step;
+        let (lhs_index, lhs_time) = self.node_position(time_offset);
+        let lhs = &self.nodes[lhs_index];
+        let rhs = &self.nodes[lhs_index + 1];
+        let location = Self::interpolate_nodes(
+            time_offset, 
+            lhs_time, 
+            lhs, 
+            rhs
+        );
 
-        let node = &*self.nodes[node_index].read().unwrap();
-        let interpolated = match node {
-            TrackNode::Atom(lhs) => {
-                let rhs = &*self.nodes[node_index + 1].read().unwrap();
+        Ok(location)
+    }
 
-                interpolate_track_part(
-                    SpaceTimeAtom::new(lhs, &lhs_node_time),
-                    SpaceTimeAtom::new(rhs.atom_start(), &rhs_node_time),
-                    &vtime,
+    fn interpolate_nodes(
+        time_offset: chrono::Duration, 
+        lhs_time: chrono::Duration,
+        lhs: &TrackNode, 
+        rhs: &TrackNode
+    ) -> Vector {
+        let rhs_time = lhs_time + lhs.step();
+
+        let time_offset = time_offset.as_relative_time();
+        let lhs_time = lhs_time.as_relative_time();
+        let rhs_time = rhs_time.as_relative_time();
+
+        match lhs {
+            TrackNode::Atom(lhs) => match rhs {
+                TrackNode::Atom(rhs) => interpolate_track_part(
+                    SpaceTimeAtom::new(lhs, lhs_time),
+                    SpaceTimeAtom::new(rhs, rhs_time),
+                    time_offset,
+                ),
+                TrackNode::Collision(rhs) => interpolate_track_part(
+                    SpaceTimeAtom::new(lhs, lhs_time),
+                    SpaceTimeAtom::new(&rhs.src_track_atom, rhs_time), 
+                    time_offset,
+                )
+            },
+            TrackNode::Collision(lhs) => match rhs {
+                TrackNode::Atom(rhs) => interpolate_track_part(
+                    SpaceTimeAtom::new(&lhs.track_atom, lhs_time), 
+                    SpaceTimeAtom::new(rhs, rhs_time), 
+                    time_offset,
+                ),
+                TrackNode::Collision(rhs) => interpolate_track_part(
+                    SpaceTimeAtom::new(&lhs.track_atom, lhs_time), 
+                    SpaceTimeAtom::new(&rhs.src_track_atom, rhs_time), 
+                    time_offset,
                 )
             }
-            TrackNode::Composite(composite) => {
-                if composite.contains_time(vtime) {
-                    composite.interpolate(vtime)
-                } else {
-                    let lhs = composite;
-                    let rhs = self.nodes[node_index + 1].read().unwrap();
-
-                    interpolate_track_part(
-                        SpaceTimeAtom::new(lhs.atom_end(), lhs.time_end()),
-                        SpaceTimeAtom::new(
-                            rhs.atom_start(),
-                            rhs.time_start()
-                                .unwrap_or(&(relative_time + self.compute_step)),
-                        ),
-                        vtime,
-                    )
-                }
-            }
-        };
-
-        Ok(interpolated)
+        }
     }
 
-    /// Compute step relative to 1 second
-    pub fn relative_compute_step(&self) -> RelativeTime {
-        self.compute_step.as_relative_time()
-    }
-
-    pub fn compute_step(&self) -> &chrono::Duration {
-        &self.compute_step
+    pub fn compute_step(&self) -> chrono::Duration {
+        self.compute_step
     }
 
     pub fn computed_range(&self) -> Range<chrono::Duration> {
@@ -344,59 +292,171 @@ impl Track {
     }
 
     pub fn time_end(&self) -> chrono::Duration {
-        // TODO: take into account composite nodes
-        self.time_start + self.time_length()
+        self.time_end
     }
 
     pub fn time_length(&self) -> chrono::Duration {
-        self.compute_step * (self.nodes.len() - 1) as i32
+        self.time_end - self.time_start
     }
 
-    pub fn node_start(&self) -> Shared<TrackNode> {
-        self.nodes.first().unwrap().share()
+    pub fn node_start(&self) -> &TrackNode {
+        self.nodes.first().unwrap()
     }
 
-    pub fn node_end(&self) -> Shared<TrackNode> {
-        self.nodes.last().unwrap().share()
+    pub fn node_start_mut(&mut self) -> &mut TrackNode {
+        self.nodes.first_mut().unwrap()
     }
 
-    pub fn set_initial_node(&mut self, node: TrackNode, time_start: chrono::Duration) {
+    pub fn node_end(&self) -> &TrackNode {
+        self.nodes.last().unwrap()
+    }
+
+    pub fn node_end_mut(&mut self) -> &mut TrackNode {
+        self.nodes.last_mut().unwrap()
+    }
+
+    pub fn set_initial_node(&mut self, mut node: TrackAtom, time_start: chrono::Duration) {
         self.nodes.clear();
         self.time_start = time_start;
+        self.time_end = time_start;
+        
+        node.step = self.compute_step;
         self.nodes.push_back(node.into());
     }
 
-    pub fn push_back(&mut self, node: TrackNode) {
-        if self.nodes.push_back(node.into()) {
-            self.time_start = self.time_start + self.compute_step;
+    pub fn push_back(&mut self, mut node: TrackNode) {
+        let time_start = self.time_start;
+        let old_node = self.node_end();
+        let mut old_step = old_node.step();
+
+        match node {
+            TrackNode::Atom(ref mut new) => new.step = self.compute_step,
+            TrackNode::Collision(ref mut new) => {
+                new.back_step = (new.when - time_start) - self.nearest_compute_step_time(&new.when);
+
+                let old_node_step = match old_node {
+                    TrackNode::Atom(_) => {
+                        new.back_step
+                    },
+                    TrackNode::Collision(old) => {
+                        new.when - old.when
+                    }
+                };
+
+                let old_node = self.node_end_mut();
+                old_node.set_step(old_node_step);
+
+                new.step = old_step - old_node.step();
+                old_step = old_node.step();
+            }
+        }
+
+        self.time_end = self.time_end + old_step;
+
+        if let Some(removed) = self.nodes.push_back(node) {
+            self.time_start = self.time_start + removed.step();
         }
     }
 
-    pub fn push_front(&mut self, node: TrackNode) {
-        self.nodes.push_front(node.into());
-        self.time_start = self.time_start - self.compute_step;
-    }
+    pub fn push_front(&mut self, mut node: TrackNode) {
+        let old_node = self.node_start();
 
-    pub fn append<I: Iterator<Item = TrackNode>>(&mut self, iter: I) {
-        let delta = self.nodes.append(iter.map(|node| node.into()));
-        self.time_start = self.time_start + self.compute_step * delta;
-    }
+        match node {
+            TrackNode::Atom(ref mut new) => {
+                match old_node {
+                    TrackNode::Atom(_) => new.step = self.compute_step,
+                    TrackNode::Collision(old) => new.step = old.back_step,
+                }
 
-    pub fn prepend<I: Iterator<Item = TrackNode>>(&mut self, iter: I) {
-        let added = self.nodes.prepend(iter.map(|node| node.into()));
-        self.time_start = self.time_start - self.compute_step * added;
-    }
+                self.time_start = self.time_start - new.step;
+            },
+            TrackNode::Collision(ref mut new) => {
+                match old_node {
+                    TrackNode::Atom(_) => {
+                        new.step = self.time_start - new.when;
+                        new.back_step = self.compute_step - new.step;
+                    },
+                    TrackNode::Collision(old) => {
+                        new.step = old.when - new.when;
+                        new.back_step = old.back_step - new.step;
+                    }
+                }
 
-    pub fn get_node(&mut self, vtime: &chrono::Duration) -> Option<Shared<TrackNode>> {
-        if self.computed_range().contains(vtime) {
-            let node_index = self.node_index(vtime);
-            Some(self.nodes[node_index].share())
-        } else {
-            None
+                self.time_start = new.when;
+            }
+        }
+
+        if let Some(_) = self.nodes.push_front(node) {
+            self.time_end = self.time_end - self.node_end().step();
         }
     }
 
-    pub fn iter_nodes(&self) -> ringbuffer::Iter<Shared<TrackNode>> {
+    pub fn place_collision(
+        &mut self,
+        colliding_object: SharedWeak<Object4d>,
+        when: chrono::Duration,
+        time_direction: TimeDirection,
+        track_atom: TrackAtom,
+    ) -> CanceledCollisions {
+        let (collision, canceled) = self.make_new_collision(
+            colliding_object, 
+            when, 
+            time_direction, 
+            track_atom
+        );
+
+        match collision.time_direction {
+            TimeDirection::Forward => self.push_back(collision.into()),
+            TimeDirection::Backward => self.push_front(collision.into()),
+        }
+
+        canceled
+    }
+
+    pub fn make_new_collision<'track>(
+        &'track mut self,
+        colliding_object: SharedWeak<Object4d>,
+        when: chrono::Duration,
+        time_direction: TimeDirection,
+        track_atom: TrackAtom,
+    ) -> (Collision, CanceledCollisions) {
+        let peek_src_node: fn(&mut ringbuffer::Truncated<'track, TrackNode>) 
+            -> Option<<ringbuffer::Truncated<'track, TrackNode> as Iterator>::Item>;
+        let range;
+ 
+        match time_direction {
+            TimeDirection::Forward => {
+                peek_src_node = ringbuffer::Truncated::<'track, TrackNode>::peek_first;
+                range = TruncateRange::From(when);
+            },
+            TimeDirection::Backward => {
+                peek_src_node = ringbuffer::Truncated::<'track, TrackNode>::peek_last;
+                range = TruncateRange::To(when);
+            }
+        }
+
+        let mut canceled = self.truncate(range);
+        let src_node = peek_src_node(&mut canceled).expect("canceled track can't be empty");
+        let src_atom = TrackAtom::new(*src_node.location(), *src_node.velocity());
+
+        let collision = Collision::new(
+            colliding_object, 
+            when, 
+            time_direction, 
+            src_atom, 
+            track_atom
+        );
+
+        let canceled = canceled.filter_map(|node| match node {
+            TrackNode::Atom(_) => None,
+            TrackNode::Collision(node) => Some(node.clone())
+        }).collect();
+
+
+        (collision, canceled)
+    }
+
+    pub fn iter_nodes(&self) -> ringbuffer::Iter<TrackNode> {
         self.nodes.iter()
     }
 
@@ -404,17 +464,50 @@ impl Track {
         self.nodes.len() == self.nodes.capacity()
     }
 
-    pub fn truncate(&mut self, range: impl Into<TruncateRange<chrono::Duration>>) {
+    pub fn truncate(
+        &mut self, 
+        range: impl Into<TruncateRange<chrono::Duration>>
+    ) -> ringbuffer::Truncated<TrackNode> {
         let range = range.into();
+        let range = range.map(|time| self.node_position(self.time_offset(time)));
+        
+        let canceled = self.nodes.truncate(
+            range.map(|(node_index, _)| *node_index)
+        );
 
-        let range = range.map(|time| self.node_index(time));
-        let begin_node_delta = self.nodes.truncate(range);
-        self.time_start = self.time_start + self.compute_step * begin_node_delta as i32;
+        match range {
+            TruncateRange::From((_, time)) => self.time_end = time + self.time_start,
+            TruncateRange::To((_, time)) => self.time_start = time + self.time_start,
+        }
+
+        canceled
     }
 
-    fn node_index(&self, vtime: &chrono::Duration) -> usize {
-        (self.time_offset(vtime).num_milliseconds() / self.compute_step.num_milliseconds())
-            as usize
+    fn node_position(&self, time_offset: chrono::Duration) -> (usize, chrono::Duration) {
+        let mut index = (
+            time_offset.num_milliseconds() / 
+            self.compute_step.num_milliseconds()
+        ) as usize;
+
+        let mut index_time = self.compute_step * index as i32;
+
+        let mut index_step = self.nodes[index].step();
+        while time_offset > index_time + index_step {
+            index += 1;
+            index_time = index_time + index_step;
+            index_step = self.nodes[index].step();
+        }
+
+        (index, index_time)
+    }
+
+    fn nearest_compute_step_time(&self, vtime: &chrono::Duration) -> chrono::Duration {
+        let index = (
+            self.time_offset(vtime).num_milliseconds() / 
+            self.compute_step.num_milliseconds()
+        ) as usize;
+
+        self.compute_step * index as i32
     }
 
     pub fn time_offset(&self, vtime: &chrono::Duration) -> chrono::Duration {
@@ -425,16 +518,16 @@ impl Track {
 fn interpolate_track_part(
     lhs: SpaceTimeAtom,
     rhs: SpaceTimeAtom,
-    vtime: &chrono::Duration,
+    vtime: RelativeTime,
 ) -> Vector {
     hermite_interpolation(
         &lhs.track_atom.location,
         &lhs.track_atom.velocity,
-        lhs.time.as_relative_time(),
+        lhs.time,
         
         &rhs.track_atom.location,
         &rhs.track_atom.velocity,
-        rhs.time.as_relative_time(),
-        vtime.as_relative_time(),
+        rhs.time,
+        vtime,
     )
 }

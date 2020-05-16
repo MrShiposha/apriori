@@ -48,6 +48,12 @@ impl<T: ?Sized> SharedWeak<T> {
     }
 }
 
+impl<T> Clone for SharedWeak<T> {
+    fn clone(&self) -> Self {
+        Self(Weak::clone(&self.0))
+    }
+}
+
 #[macro_export]
 macro_rules! shared_access {
     ($secured_obj:expr $(, $err:expr)?) => {

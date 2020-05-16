@@ -1,5 +1,6 @@
 use crate::{
     r#type::{
+        ObjectId,
         ObjectName,
         Mass,
         Distance,
@@ -9,6 +10,7 @@ use crate::{
 };
 
 pub struct Object4d {
+    id: ObjectId,
     track: Track,
     name: ObjectName,
     mass: Mass,
@@ -27,6 +29,7 @@ impl Object4d {
         color: Color,
     ) -> Self {
         Self {
+            id: 0,
             track: Track::new(track_size, compute_step),
             name,
             mass,
@@ -34,6 +37,14 @@ impl Object4d {
             color,
             is_currently_computing: false,
         }
+    }
+
+    pub fn id(&self) -> ObjectId {
+        self.id
+    }
+
+    pub fn set_id(&mut self, id: ObjectId) {
+        self.id = id;
     }
 
     pub fn name(&self) -> &ObjectName {

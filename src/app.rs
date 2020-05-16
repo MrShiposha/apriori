@@ -2,7 +2,7 @@ use super::{
     cli, graphics,
     message::{self, Message},
     r#type::{Color, RawTime, TimeFormat, TimeUnit},
-    scene::{physics::Engine, SceneManager, track::Track},
+    scene::{engine::Engine, SceneManager, track::Track},
     shared_access,
     Error, Result, Shared,
     logger::LOGGER,
@@ -683,7 +683,7 @@ impl App {
     fn draw_track(window: &mut Window, color: &Point3<f32>, track: &Track, step: chrono::Duration) {
         let mut next_time = track.time_start() + step;
         
-        let mut last_location = *shared_access![track.node_start()].atom_start().location();
+        let mut last_location = *track.node_start().location();
         while track.computed_range().contains(&next_time) {
             let new_location = track.interpolate(&next_time).unwrap();
 

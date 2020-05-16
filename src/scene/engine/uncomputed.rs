@@ -4,23 +4,22 @@ use {
             track::{
                 Track,
                 TrackNode,
-                TrackAtom,
             },
         },
         r#type::{
             RelativeTime,
             AsRelativeTime,
+            TimeDirection,
         },
-        shared::Shared,
     }
 };
 
 pub trait UncomputedTrack {
     fn add_node(track: &mut Track, node: TrackNode);
 
-    fn last_node(track: &Track) -> Shared<TrackNode>;
+    fn last_node(track: &Track) -> &TrackNode;
 
-    fn last_atom(last_node: &TrackNode) -> &TrackAtom;
+    fn last_node_mut(track: &mut Track) -> &mut TrackNode;
 
     fn last_time(track: &Track) -> RelativeTime;
 
@@ -29,6 +28,8 @@ pub trait UncomputedTrack {
     fn new_time(track: &Track) -> RelativeTime {
         Self::last_time(track) + Self::time_step(track)
     }
+
+    fn time_direction() -> TimeDirection;
 }
 
 pub struct ForwardUncomputedTrack;
@@ -39,12 +40,12 @@ impl UncomputedTrack for ForwardUncomputedTrack {
         track.push_back(node);
     }
 
-    fn last_node(track: &Track) -> Shared<TrackNode> {
+    fn last_node(track: &Track) -> &TrackNode {
         track.node_end()
     }
 
-    fn last_atom(last_node: &TrackNode) -> &TrackAtom {
-        last_node.atom_end()
+    fn last_node_mut(track: &mut Track) -> &mut TrackNode {
+        track.node_end_mut()
     }
 
     fn last_time(track: &Track) -> RelativeTime {
@@ -52,7 +53,11 @@ impl UncomputedTrack for ForwardUncomputedTrack {
     }
 
     fn time_step(track: &Track) -> RelativeTime {
-        track.relative_compute_step()
+        Self::last_node(track).step().as_relative_time()
+    }
+
+    fn time_direction() -> TimeDirection {
+        TimeDirection::Forward
     }
 }
 
@@ -61,12 +66,12 @@ impl UncomputedTrack for BackwardUncomputedTrack {
         track.push_front(node);
     }
 
-    fn last_node(track: &Track) -> Shared<TrackNode> {
+    fn last_node(track: &Track) -> &TrackNode {
         track.node_start()
     }
 
-    fn last_atom(last_node: &TrackNode) -> &TrackAtom {
-        last_node.atom_start()
+    fn last_node_mut(track: &mut Track) -> &mut TrackNode {
+        track.node_start_mut()
     }
 
     fn last_time(track: &Track) -> RelativeTime {
@@ -74,11 +79,17 @@ impl UncomputedTrack for BackwardUncomputedTrack {
     }
 
     fn time_step(track: &Track) -> RelativeTime {
-        -track.relative_compute_step()
+        match Self::last_node(track) {
+            TrackNode::Atom(_) => -track.compute_step().as_relative_time(),
+            TrackNode::Collision(node) => -node.back_step.as_relative_time(),
+        }
     }
 
     fn new_time(track: &Track) -> RelativeTime {
-        let step = track.relative_compute_step();
-        Self::last_time(track) - step
+        Self::last_time(track) - Self::time_step(track)
+    }
+
+    fn time_direction() -> TimeDirection {
+        TimeDirection::Backward
     }
 }

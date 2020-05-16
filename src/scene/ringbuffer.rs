@@ -45,11 +45,28 @@ impl<T: Default + Clone> RingBuffer<T> {
         }
     }
 
+    pub fn first_mut(&mut self) -> Option<&mut T> {
+        if self.is_empty() {
+            None
+        } else {
+            Some(&mut self.inner[self.start_index])
+        }
+    }
+
     pub fn last(&self) -> Option<&T> {
         if self.is_empty() {
             None
         } else {
-            Some(&self.inner[(self.start_index + self.len - 1) % self.capacity()])
+            Some(&self.inner[self.wrap_index(self.len - 1)])
+        }
+    }
+
+    pub fn last_mut(&mut self) -> Option<&mut T> {
+        if self.is_empty() {
+            None
+        } else {
+            let index = self.wrap_index(self.len - 1);
+            Some(&mut self.inner[index])
         }
     }
 
@@ -60,22 +77,30 @@ impl<T: Default + Clone> RingBuffer<T> {
         }
     }
 
-    /// Returns true if the start_index has changed
-    pub fn push_back(&mut self, el: T) -> bool {
+    /// Add new item at the end
+    /// Returns removed item at the beginning
+    pub fn push_back(&mut self, el: T) -> Option<T> {
         let capacity = self.capacity();
-        self.inner[(self.start_index + self.len) % capacity] = el;
+        let index = self.wrap_raw_index(self.start_index + self.len);
+
+        let removed = std::mem::replace(
+            &mut self.inner[index],
+            el
+        );
 
         self.len += 1;
         if self.len > capacity {
-            self.start_index = (self.start_index + 1) % capacity;
+            self.start_index = self.wrap_raw_index(self.start_index + 1);
             self.len = capacity;
-            true
+            Some(removed)
         } else {
-            false
+            None
         }
     }
 
-    pub fn push_front(&mut self, el: T) {
+    /// Add new item at the beginning
+    /// Returns removed item at the end
+    pub fn push_front(&mut self, el: T) -> Option<T> {
         let capacity = self.capacity();
         let (mut start_index, is_overflowed) = self.start_index.overflowing_sub(1);
         if is_overflowed {
@@ -83,75 +108,77 @@ impl<T: Default + Clone> RingBuffer<T> {
         }
 
         self.start_index = start_index;
-        self.inner[self.start_index] = el;
+        let removed = std::mem::replace(
+            &mut self.inner[self.start_index],
+            el
+        );
 
         self.len += 1;
         if self.len > capacity {
             self.len = capacity;
+            Some(removed)
+        } else {
+            None
         }
     }
 
-    /// Returns start_index's delta
-    pub fn append<I: IntoIterator<Item = T>>(&mut self, iter: I) -> i32 {
-        let mut delta = 0;
+    pub fn append<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         for item in iter {
-            if self.push_back(item) {
-                delta += 1;
-            }
+            self.push_back(item);
         }
-
-        delta
     }
 
-    /// Returns total objects added
-    pub fn prepend<I: IntoIterator<Item = T>>(&mut self, iter: I) -> i32 {
-        let mut added = 0;
+    pub fn prepend<I: IntoIterator<Item = T>>(&mut self, iter: I) {   
         for item in iter {
             self.push_front(item);
-            added += 1;
         }
-
-        added
     }
 
-    /// Returns start_index-delta
-    pub fn truncate(&mut self, range: impl Into<TruncateRange<usize>>) -> usize {
+    pub fn truncate(&mut self, range: impl Into<TruncateRange<usize>>) -> Truncated<T> {
         let range = range.into();
 
         match range {
             TruncateRange::From(index) => {
+                let old_len = self.len;
                 if index < self.len {
                     self.len = index + 1;
                 }
 
-                0
+                Truncated::new(self, self.wrap_index(self.len), old_len - index - 1)
             }
             TruncateRange::To(mut index) => {
                 if index >= self.len {
                     index = self.len - 1;
                 }
 
-                self.start_index = (self.start_index + index) % self.capacity();
+                let old_start_index = self.start_index;
+                self.start_index = self.wrap_index(index);
                 self.len -= index;
 
-                index
+                Truncated::new(self, old_start_index, index)
             }
         }
     }
 
     pub fn get(&self, index: usize) -> &T {
         unsafe {
-            self.inner
-                .get_unchecked((self.start_index + index) % self.capacity())
+            self.inner.get_unchecked(self.wrap_index(index))
         }
     }
 
     pub fn get_mut(&mut self, index: usize) -> &mut T {
-        let capacity = self.capacity();
         unsafe {
-            self.inner
-                .get_unchecked_mut((self.start_index + index) % capacity)
+            let index = self.wrap_index(index);
+            self.inner.get_unchecked_mut(index)
         }
+    }
+
+    fn wrap_index(&self, index: usize) -> usize {
+        self.wrap_raw_index(self.start_index + index)
+    }
+
+    fn wrap_raw_index(&self, index: usize) -> usize {
+        index % self.capacity()
     }
 }
 
@@ -191,6 +218,69 @@ impl<'rb, T: Default + Clone> Iterator for Iter<'rb, T> {
             self.index += 1;
 
             Some(self.ringbuffer.get(index))
+        }
+    }
+}
+
+pub struct Truncated<'rb, T: Default + Clone> {
+    ringbuffer: &'rb mut RingBuffer<T>,
+    index: usize,
+    len: usize
+}
+
+impl<'rb, T: Default + Clone> Truncated<'rb, T> {
+    pub fn new(
+        ringbuffer: &'rb mut RingBuffer<T>, 
+        index: usize, 
+        len: usize
+    ) -> Self {
+        Self {
+            ringbuffer,
+            index,
+            len
+        }
+    }
+
+    pub fn peek_first(&mut self) -> Option<<Self as Iterator>::Item> {
+        <Self as Iterator>::nth(self, 0)
+    }
+
+    pub fn peek_last(&mut self) -> Option<<Self as Iterator>::Item> {
+        <Self as Iterator>::nth(self, self.len - 1)
+    }
+
+    unsafe fn get_option_mut(&mut self, index: usize) -> Option<<Self as Iterator>::Item> {
+        let item = self.ringbuffer.inner.get_unchecked_mut(index);
+
+        Some(&mut *(item as *mut _))
+    }
+}
+
+impl<'rb, T: Default + Clone> Iterator for Truncated<'rb, T> {
+    type Item = &'rb mut T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.len != 0 {
+            unsafe {
+                let old_index = self.index;
+                self.index = self.ringbuffer.wrap_raw_index(self.index + 1);
+                self.len -= 1;
+
+                self.get_option_mut(old_index)
+            }
+        } else {
+            None
+        }
+    }
+
+    fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        if n < self.len {
+            let index = self.ringbuffer.wrap_index(self.index + n);
+            unsafe {
+                self.get_option_mut(index)
+            }
+        } else {
+            None
         }
     }
 }
@@ -397,25 +487,29 @@ mod tests {
         buffer.append(vec![1, 2, 3]);
 
         buffer.append(vec![1, 2, 3]);
-        assert_eq!(buffer.truncate(0..), 0);
+        let t = buffer.truncate(0..);
+        assert_eq!(t.map(|i| *i).collect::<Vec<_>>(), vec![2, 3]);
         assert!(buffer.len() == 1);
         assert!(buffer[0] == 1);
 
         buffer.append(vec![2, 3]);
-        assert_eq!(buffer.truncate(1..), 0);
+        let t = buffer.truncate(1..);
+        assert_eq!(t.map(|i| *i).collect::<Vec<_>>(), vec![3]);
         assert!(buffer.len() == 2);
         assert!(buffer[0] == 1);
         assert!(buffer[1] == 2);
 
         buffer.push_back(3);
-        assert_eq!(buffer.truncate(2..), 0);
+        let t = buffer.truncate(2..);
+        assert_eq!(t.map(|i| *i).collect::<Vec<_>>(), vec![]);
         assert!(buffer.len() == 3);
         assert!(buffer[0] == 1);
         assert!(buffer[1] == 2);
         assert!(buffer[2] == 3);
 
         buffer.push_back(4);
-        assert_eq!(buffer.truncate(1..), 0);
+        let t = buffer.truncate(1..);
+        assert_eq!(t.map(|i| *i).collect::<Vec<_>>(), vec![4]);
         assert!(buffer.len() == 2);
         assert!(buffer[0] == 2);
         assert!(buffer[1] == 3);
@@ -427,25 +521,25 @@ mod tests {
         buffer.append(vec![1, 2, 3]);
 
         buffer.append(vec![1, 2, 3]);
-        assert_eq!(buffer.truncate(..0), 0);
+        let t = buffer.truncate(..0);
         assert!(buffer.len() == 3);
         assert!(buffer[0] == 1);
         assert!(buffer[1] == 2);
         assert!(buffer[2] == 3);
 
-        assert_eq!(buffer.truncate(..1), 1);
+        let t = buffer.truncate(..1);
         assert!(buffer.len() == 2);
         assert!(buffer[0] == 2);
         assert!(buffer[1] == 3);
 
         buffer.push_front(1);
-        assert_eq!(buffer.truncate(..2), 2);
+        let t = buffer.truncate(..2);
         assert!(buffer.len() == 1);
         assert!(buffer[0] == 3);
 
         buffer.prepend(vec![1, 2]);
         buffer.push_back(4);
-        assert_eq!(buffer.truncate(..1), 1);
+        let t = buffer.truncate(..1);
         assert!(buffer.len() == 2);
         assert!(buffer[0] == 3);
         assert!(buffer[1] == 4);
