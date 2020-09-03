@@ -126,6 +126,10 @@ impl SceneManager {
         }
     }
 
+    pub fn get_object_by_name(&self, object_name: &ObjectName) -> Option<Shared<Object4d>> {
+        self.objects.get(object_name).map(|(_, object, _)| object.share())
+    }
+
     pub fn query_objects_by_time<F: FnMut(&Object4d, Vector)>(
         &mut self, 
         engine: &mut Engine,

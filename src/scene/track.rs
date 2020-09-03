@@ -101,28 +101,31 @@ impl SpaceTimeAtom<'_> {
 #[derive(Clone)]
 pub struct Collision {
     pub colliding_object: SharedWeak<Object4d>,
+    pub time_direction: TimeDirection,
     pub when: chrono::Duration,
     pub step: chrono::Duration,
     pub back_step: chrono::Duration,
-    pub time_direction: TimeDirection,
     pub src_track_atom: TrackAtom,
+    pub prev_node_src_step: chrono::Duration,
     pub track_atom: TrackAtom,
 }
 
 impl Collision {
     pub fn new(
         colliding_object: SharedWeak<Object4d>,
-        when: chrono::Duration,
         time_direction: TimeDirection,
+        when: chrono::Duration,
         src_track_atom: TrackAtom,
+        prev_node_src_step: chrono::Duration,
         track_atom: TrackAtom,
     ) -> Self {
         Self {
             colliding_object,
+            time_direction,
             when,
             step: chrono::Duration::zero(),
             back_step: chrono::Duration::zero(),
-            time_direction,
+            prev_node_src_step,
             src_track_atom,
             track_atom,
         }
@@ -245,31 +248,37 @@ impl Track {
         let rhs_time = lhs_time + lhs.step();
 
         let time_offset = time_offset.as_relative_time();
-        let lhs_time = lhs_time.as_relative_time();
-        let rhs_time = rhs_time.as_relative_time();
+        let lhs_rel_time = lhs_time.as_relative_time();
+        let rhs_rel_time = rhs_time.as_relative_time();
 
         match lhs {
             TrackNode::Atom(lhs) => match rhs {
                 TrackNode::Atom(rhs) => interpolate_track_part(
-                    SpaceTimeAtom::new(lhs, lhs_time),
-                    SpaceTimeAtom::new(rhs, rhs_time),
+                    SpaceTimeAtom::new(lhs, lhs_rel_time),
+                    SpaceTimeAtom::new(rhs, rhs_rel_time),
                     time_offset,
                 ),
                 TrackNode::Collision(rhs) => interpolate_track_part(
-                    SpaceTimeAtom::new(lhs, lhs_time),
-                    SpaceTimeAtom::new(&rhs.src_track_atom, rhs_time), 
+                    SpaceTimeAtom::new(lhs, lhs_rel_time),
+                    SpaceTimeAtom::new(
+                        &rhs.src_track_atom, 
+                        (lhs_time + rhs.prev_node_src_step).as_relative_time()
+                    ), 
                     time_offset,
                 )
             },
             TrackNode::Collision(lhs) => match rhs {
                 TrackNode::Atom(rhs) => interpolate_track_part(
-                    SpaceTimeAtom::new(&lhs.track_atom, lhs_time), 
-                    SpaceTimeAtom::new(rhs, rhs_time), 
+                    SpaceTimeAtom::new(&lhs.track_atom, lhs_rel_time), 
+                    SpaceTimeAtom::new(rhs, rhs_rel_time), 
                     time_offset,
                 ),
                 TrackNode::Collision(rhs) => interpolate_track_part(
-                    SpaceTimeAtom::new(&lhs.track_atom, lhs_time), 
-                    SpaceTimeAtom::new(&rhs.src_track_atom, rhs_time), 
+                    SpaceTimeAtom::new(&lhs.track_atom, lhs_rel_time), 
+                    SpaceTimeAtom::new(
+                        &rhs.src_track_atom, 
+                        (lhs_time + rhs.prev_node_src_step).as_relative_time()
+                    ), 
                     time_offset,
                 )
             }
@@ -388,6 +397,7 @@ impl Track {
 
         if let Some(_) = self.nodes.push_front(node) {
             self.time_end = self.time_end - self.node_end().step();
+            // TODO reset node_end().step
         }
     }
 
@@ -405,6 +415,9 @@ impl Track {
             track_atom
         );
 
+        // println!("SOURCE: {}", collision.src_track_atom.location());
+        // println!("COLLISION: {}", collision.track_atom.location());
+
         match collision.time_direction {
             TimeDirection::Forward => self.push_back(collision.into()),
             TimeDirection::Backward => self.push_front(collision.into()),
@@ -414,44 +427,52 @@ impl Track {
     }
 
     pub fn make_new_collision<'track>(
-        &'track mut self,
+        &mut self,
         colliding_object: SharedWeak<Object4d>,
         when: chrono::Duration,
         time_direction: TimeDirection,
         track_atom: TrackAtom,
     ) -> (Collision, CanceledCollisions) {
-        let peek_src_node: fn(&mut ringbuffer::Truncated<'track, TrackNode>) 
-            -> Option<<ringbuffer::Truncated<'track, TrackNode> as Iterator>::Item>;
-        let range;
+        let src_atom;
+        let prev_node_src_step;
+        let canceled;
+
+        let collect_canceled_collisions = |truncated_nodes: ringbuffer::Truncated<TrackNode>| {
+            truncated_nodes.filter_map(|node| match node {
+                TrackNode::Atom(_) => None,
+                TrackNode::Collision(node) => Some(node.clone())
+            }).collect::<CanceledCollisions>()
+        };
+
+        const CANCELED_TRACK_EXPECTED: &'static str = "canceled track can't be empty";
  
         match time_direction {
             TimeDirection::Forward => {
-                peek_src_node = ringbuffer::Truncated::<'track, TrackNode>::peek_first;
-                range = TruncateRange::From(when);
+                let mut truncated_nodes = self.truncate(when..);
+                let src_node = truncated_nodes.peek_first().expect(CANCELED_TRACK_EXPECTED);
+                src_atom = TrackAtom::new(*src_node.location(), *src_node.velocity());
+                canceled = collect_canceled_collisions(truncated_nodes);
+
+                prev_node_src_step = self.node_end().step();
             },
             TimeDirection::Backward => {
-                peek_src_node = ringbuffer::Truncated::<'track, TrackNode>::peek_last;
-                range = TruncateRange::To(when);
+                let mut truncated_nodes = self.truncate(..when);
+                let src_node = truncated_nodes.peek_last().expect(CANCELED_TRACK_EXPECTED);
+                src_atom = TrackAtom::new(*src_node.location(), *src_node.velocity());
+                canceled = collect_canceled_collisions(truncated_nodes);
+
+                prev_node_src_step = src_node.step();
             }
         }
 
-        let mut canceled = self.truncate(range);
-        let src_node = peek_src_node(&mut canceled).expect("canceled track can't be empty");
-        let src_atom = TrackAtom::new(*src_node.location(), *src_node.velocity());
-
         let collision = Collision::new(
             colliding_object, 
-            when, 
             time_direction, 
-            src_atom, 
+            when, 
+            src_atom,
+            prev_node_src_step,
             track_atom
         );
-
-        let canceled = canceled.filter_map(|node| match node {
-            TrackNode::Atom(_) => None,
-            TrackNode::Collision(node) => Some(node.clone())
-        }).collect();
-
 
         (collision, canceled)
     }

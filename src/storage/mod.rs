@@ -252,12 +252,25 @@ impl OccupiedSpace {
         end_time: RelativeTime,
         end_velocity: Vector,
     ) -> Self {
+        let mut location_info = 0;
+
         macro_rules! min_max {
-            ($a:expr, $b:expr $(, +/- $cube_size:expr)?) => {
-                (
-                    $a.min($b) $(- $cube_size)?,
-                    $a.max($b) $(+ $cube_size)?,
-                )
+            ($begin_coord:ident($begin:expr), $end_coord:ident($end:expr)) => {
+                if $begin > $end {
+                    location_info |= LocationCoordMask::$begin_coord as LocationFlags;
+                    ($end - cube_size, $begin + cube_size)
+                } else {
+                    location_info |= LocationCoordMask::$end_coord as LocationFlags;
+                    ($begin - cube_size, $end + cube_size)
+                }
+            };
+
+            ($begin:expr, $end:expr) => {
+                if $begin > $end {
+                    ($end, $begin)
+                } else {
+                    ($begin, $end)
+                }
             };
         }
 
@@ -269,12 +282,12 @@ impl OccupiedSpace {
         let y_1 = end_location[1];
         let z_1 = end_location[2];
 
-        let (x_min, x_max) = min_max![x_0, x_1, +/- cube_size];
-        let (y_min, y_max) = min_max![y_0, y_1, +/- cube_size];
-        let (z_min, z_max) = min_max![z_0, z_1, +/- cube_size];
+        let (x_min, x_max) = min_max![BeginX(x_0), EndX(x_1)];
+        let (y_min, y_max) = min_max![BeginY(y_0), EndY(y_1)];
+        let (z_min, z_max) = min_max![BeginZ(z_0), EndZ(z_1)];
         let (t_min, t_max) = min_max![begin_time, end_time];
 
-        let mut oss = Self {
+        Self {
             object_id,
             x_min, x_max,
             y_min, y_max,
@@ -283,12 +296,8 @@ impl OccupiedSpace {
             begin_velocity,
             end_velocity,
             cube_size,
-            location_info: LocationInfo(0)
-        };
-
-        oss.location_info = LocationInfo::save_locations(begin_location, end_location, &oss);
-
-        oss
+            location_info: LocationInfo(location_info)
+        }
     }
 
     // pub fn with_location(
@@ -394,28 +403,6 @@ enum LocationCoordMask {
 struct LocationInfo(LocationFlags);
 
 impl LocationInfo {
-    fn save_locations(begin_location: &Vector, end_location: &Vector, os: &OccupiedSpace) -> Self {
-        let mut flags = 0;
-
-        macro_rules! set_loc_flag {
-            ($mask:ident($coord:expr), max: $max:expr) => {
-                if $coord == $max - os.cube_size {
-                    flags |= LocationCoordMask::$mask as LocationFlags;
-                }
-            };
-        }
-
-        set_loc_flag![BeginX(begin_location[0]), max: os.x_max];
-        set_loc_flag![BeginY(begin_location[1]), max: os.y_max];
-        set_loc_flag![BeginZ(begin_location[2]), max: os.z_max];
-
-        set_loc_flag![EndX(end_location[0]), max: os.x_max];
-        set_loc_flag![EndY(end_location[1]), max: os.y_max];
-        set_loc_flag![EndZ(end_location[2]), max: os.z_max];
-
-        LocationInfo(flags)
-    }
-
     fn restore_locations(&self, os: &OccupiedSpace) -> (Vector, Vector) {
         macro_rules! set_min_max {
             ($mask:ident($coord:expr), min: $min:expr, max: $max:expr) => {
@@ -446,6 +433,12 @@ impl LocationInfo {
         let begin_location = Vector::new(bx, by, bz);
         let end_location = Vector::new(ex, ey, ez);
 
+        // assert_ne!(os.y_min + os.cube_size, os.y_max - os.cube_size);
+        // assert_ne!(os.y_min, os.y_max);
+        // println!("INFO: {:#08b}", self.0);
+        // println!("{}", os);
+        // assert_ne!(by, ey);
+
         (begin_location, end_location)
     }
 }
@@ -462,11 +455,11 @@ mod tests {
 
     macro_rules! check_all_info_variants {
         (checker: $checker:ident) => {{
-            let x_min = 0.0;
+            let x_min = -1.0;
             let x_max = 1.0;
-            let y_min = -1.0;
+            let y_min = -2.0;
             let y_max = 2.0;
-            let z_min = -2.0;
+            let z_min = -3.0;
             let z_max = 3.0;
 
             $checker! {
@@ -546,20 +539,6 @@ mod tests {
                 location_info: LocationInfo(0),
             }  
         }};
-    }
-
-    #[test]
-    fn test_save_locations() {
-        macro_rules! check_info {
-            (begin: $begin:expr, end: $end:expr, info: $info:expr) => {
-                let os = make_oss![begin: $begin, end: $end];
-
-                let loc_info = LocationInfo::save_locations(&$begin, &$end, &os);
-                assert_eq!(loc_info.0, $info);
-            };
-        }
-        
-        check_all_info_variants![checker: check_info];
     }
 
     #[test]

@@ -142,9 +142,10 @@ impl<T: Default + Clone> RingBuffer<T> {
                 let old_len = self.len;
                 if index < self.len {
                     self.len = index + 1;
+                    Truncated::new(self, self.wrap_index(self.len), old_len - index - 1)
+                } else {
+                    Truncated::new(self, 0, 0)
                 }
-
-                Truncated::new(self, self.wrap_index(self.len), old_len - index - 1)
             }
             TruncateRange::To(mut index) => {
                 if index >= self.len {
@@ -275,7 +276,7 @@ impl<'rb, T: Default + Clone> Iterator for Truncated<'rb, T> {
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
         if n < self.len {
-            let index = self.ringbuffer.wrap_index(self.index + n);
+            let index = self.ringbuffer.wrap_raw_index(self.index + n);
             unsafe {
                 self.get_option_mut(index)
             }

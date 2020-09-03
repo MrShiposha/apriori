@@ -504,21 +504,21 @@ impl Engine {
                 }
             };
 
-            // use crate::shared_access;
+            use crate::shared_access;
 
-            // lazy_static::lazy_static! {
-            //     static ref FIRST_TIME: Shared<bool> = true.into();
-            // }
+            lazy_static::lazy_static! {
+                static ref FIRST_TIME: Shared<bool> = true.into();
+            }
 
-            // if !*shared_access![FIRST_TIME] {
-            //     possible_collisions.clear();
-            // }
+            if !*shared_access![FIRST_TIME] {
+                possible_collisions.clear();
+            }
 
-            if let Some(collision_descriptor) = Self::clarify_earlest_collision(
+            if let Some(collision_descriptor) = Self::clarify_earlest_collision::<U>(
                 &occupied_space, 
                 possible_collisions
             ) {
-                // *shared_access![mut FIRST_TIME] = false;
+                *shared_access![mut FIRST_TIME] = false;
                 
                 info! {
                     target: LOG_TARGET,
@@ -606,7 +606,10 @@ impl Engine {
     }
 
     // Returns colliding object id and the collision time
-    fn clarify_earlest_collision(obj_occupied_space: &OccupiedSpace, possible_collisions: Vec<OccupiedSpace>) -> Option<CollisionDescriptor> {
+    fn clarify_earlest_collision<U>(obj_occupied_space: &OccupiedSpace, possible_collisions: Vec<OccupiedSpace>) -> Option<CollisionDescriptor> 
+    where
+        U: UncomputedTrack
+    {
         const EPS: f32 = 0.0001;
         let obj_t_min = obj_occupied_space.t_min;
         let obj_t_max = obj_occupied_space.t_max; 
@@ -614,6 +617,16 @@ impl Engine {
         let obj_vel_begin = obj_occupied_space.begin_velocity;
         let obj_vel_end = obj_occupied_space.end_velocity;
         let obj_radius = obj_occupied_space.cube_size;
+
+        let earlest_predicate: fn(RelativeTime, RelativeTime) -> bool;
+        match <U as UncomputedTrack>::time_direction() {
+            TimeDirection::Forward => {
+                earlest_predicate = |new_time, old_time| new_time < old_time;
+            },
+            TimeDirection::Backward => {
+                earlest_predicate = |new_time, old_time| new_time > old_time;
+            }
+        }
 
         let mut collision: Option<CollisionDescriptor> = None;
 
@@ -668,8 +681,18 @@ impl Engine {
                     (distance - collision_distance, obj_location, colliding_location)
                 }
             ) {
+                // println!("OBJECT_ID: {}", obj_occupied_space.object_id);
+                // println!("LOC BEG: {}", obj_loc_begin);
+                // println!("LOC END: {}", obj_loc_end);
+
+                // println!("-------------------------------------------");
+
+                // println!("OBJECT_ID: {}", possible_collision.object_id);
+                // println!("LOC BEG: {}", colliding_loc_begin);
+                // println!("LOC END: {}", colliding_loc_end);
+
                 match collision {
-                    Some(descriptor) if descriptor.collision_time > collision_time => {
+                    Some(descriptor) if earlest_predicate(collision_time, descriptor.collision_time) => {
                         collision = Some(CollisionDescriptor {
                             object_location,
                             colliding_object_location,
@@ -743,6 +766,8 @@ impl Engine {
         let len_diff = obj_normal_velocity_len - col_normal_velocity_len;
         let mass_sum = object_mass + colliding_object_mass;
 
+        const VELOCITY_SCALE: f32 = 100.0;
+
         object_normal_velocity = collision_direction.scale(
             obj_normal_velocity_len - 2.0 * len_diff * colliding_object_mass / mass_sum 
         );
@@ -751,19 +776,39 @@ impl Engine {
             col_normal_velocity_len + 2.0 * len_diff * object_mass / mass_sum
         );
 
+        let object_velocity = object_tangent_velocity + object_normal_velocity.scale(VELOCITY_SCALE);
+        let colliding_object_velocity = colliding_object_tangent_velocity + colliding_object_normal_velocity.scale(VELOCITY_SCALE);
+
+        // let object_velocity = object_velocity - collision_direction.scale(
+        //     VELOCITY_SCALE * collision_direction.dot(&object_velocity)
+        // );
+        // let colliding_object_velocity = colliding_object_velocity - collision_direction.scale(
+        //     VELOCITY_SCALE * collision_direction.dot(&colliding_object_velocity)
+        // );
+
         let src_atom = match track_part.new_node {
             TrackNode::Atom(ref atom) => atom.clone(),
             _ => unreachable!()
         };
 
-        let object_velocity = src_atom.velocity() + object_tangent_velocity + object_normal_velocity;
-        let colliding_object_velocity = colliding_object_tangent_velocity + colliding_object_normal_velocity;
+        let prev_node_src_step = <U as UncomputedTrack>::time_step(
+            shared_access![track_part.object].track()
+        ).as_absolute_time();
+
+        // println!("------------------------------------------");
+        // println!("OBJECT_ID: {}", track_part.object_id);
+        // println!("SOURCE {}", src_atom.location());
+        // println!("COLLISION {}", object_location);
+
+        // println!("------------------------------------------");
+        // println!("OBJECT_ID: {}", shared_access![colliding_obj].id());
 
         track_part.new_node = Collision::new(
             colliding_obj.share_weak(), 
-            collision_time, 
             <U as UncomputedTrack>::time_direction(), 
+            collision_time, 
             src_atom, 
+            prev_node_src_step,
             TrackAtom::new(object_location, object_velocity),
         ).into();
 

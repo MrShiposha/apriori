@@ -2,7 +2,7 @@ use super::{
     cli, graphics,
     message::{self, Message},
     r#type::{Color, RawTime, TimeFormat, TimeUnit},
-    scene::{engine::Engine, SceneManager, track::Track},
+    scene::{engine::Engine, SceneManager, track::{Track, TrackNode}},
     shared_access,
     Error, Result, Shared,
     logger::LOGGER,
@@ -96,6 +96,7 @@ pub struct App {
     attractor_index: usize,
     is_names_displayed: bool,
     is_tracks_displayed: bool,
+    is_nodes_displayed: bool,
     track_step: chrono::Duration,
 }
 
@@ -140,6 +141,7 @@ impl App {
             attractor_index: 0,
             is_names_displayed: false,
             is_tracks_displayed: false,
+            is_nodes_displayed: false,
             track_step: chrono::Duration::milliseconds(500),
         }
     }
@@ -335,21 +337,25 @@ impl App {
                 println!("\n\t-- object list --");
                 self.engine.print_object_list()
             },
-            Message::AddAttractor(msg) if state.is_run() => self.handler_add_attractor(msg),
-            Message::Names(msg) => {
-                self.is_names_displayed = !msg.disable;
+            Message::AddAttractor(msg) if state.is_run() => self.handle_add_attractor(msg),
+            Message::Info(msg) => self.handle_info(msg),
 
-                Ok(())
-            }
-            Message::Tracks(msg) => {
-                self.is_tracks_displayed = !msg.disable; 
+            #[cfg(debug_assertions)]
+            Message::Interpolate(msg) if state.is_run() => self.handle_interpolate(msg),
+            // Message::Names(msg) => {
+            //     self.is_names_displayed = !msg.disable;
 
-                if let Some(step) = msg.step {
-                    self.track_step = step;
-                }
+            //     Ok(())
+            // }
+            // Message::Tracks(msg) => {
+            //     self.is_tracks_displayed = !msg.disable; 
 
-                Ok(())
-            }
+            //     if let Some(step) = msg.step {
+            //         self.track_step = step;
+            //     }
+
+            //     Ok(())
+            // }
             unexpected => return Err(Error::UnexpectedMessage(unexpected)),
         }
     }
@@ -403,7 +409,7 @@ impl App {
         Ok(())
     }
 
-    fn handler_add_attractor(&mut self,  msg: message::AddAttractor) -> Result<()> {
+    fn handle_add_attractor(&mut self,  msg: message::AddAttractor) -> Result<()> {
         let attractor_index = self.attractor_index;
         self.attractor_index += 1;
 
@@ -480,6 +486,39 @@ impl App {
         Ok(())
     }
 
+    fn handle_info(&mut self, msg: message::Info) -> Result<()> {
+        if msg.names {
+            self.is_names_displayed = !self.is_names_displayed;
+        }
+
+        if msg.tracks {
+            self.is_tracks_displayed = !self.is_tracks_displayed;
+        }
+
+        if msg.nodes {
+            self.is_nodes_displayed = !self.is_nodes_displayed;
+        }
+
+        if let Some(track_step) = msg.track_step {
+            self.track_step = track_step;
+        }
+
+        Ok(())
+    }
+
+    #[cfg(debug_assertions)]
+    fn handle_interpolate(&self, msg: message::Interpolate) -> Result<()> {
+        match self.scene_mgr.get_object_by_name(&msg.name) {
+            Some(object) => match shared_access![object].track().interpolate(&msg.time) {
+                Ok(location) => println!("{}", location),
+                Err(_) => println!("`{}`: unable to get location at that time", msg.time)
+            },
+            None => println!("Object `{}` not found", msg.name),
+        }
+
+        Ok(())
+    }
+
     fn draw_stats(&mut self) {
         if self.is_stats_enabled {
             self.draw_state_text();
@@ -501,6 +540,7 @@ impl App {
             {
                 let is_names_displayed = self.is_names_displayed;
                 let is_tracks_displayed = self.is_tracks_displayed;
+                let is_nodes_displayed = self.is_nodes_displayed;
                 let track_step = self.track_step;
 
                 let window = &mut self.window;
@@ -513,13 +553,20 @@ impl App {
 
                 let camera = &mut self.camera;
 
+                let make_text_location = move |location| {
+                    let mut text_location = camera.project(
+                        &Point3::from(location), 
+                        &window_size
+                    ).scale(hidpi_factor) - Vector2::new(quarter_text_size, -half_text_size);
+                    text_location[1] = window_size[1] * hidpi_factor - text_location[1];
+
+                    text_location
+                };
+
                 move |object, location| {
+                    
                     if is_names_displayed {
-                        let mut text_location = camera.project(
-                            &Point3::from(location), 
-                            &window_size
-                        ).scale(hidpi_factor) - Vector2::new(quarter_text_size, -half_text_size);
-                        text_location[1] = window_size[1] * hidpi_factor - text_location[1];
+                        let text_location = make_text_location(location);
 
                         window.draw_text(
                             format!("+ {}", object.name()).as_ref(),
@@ -528,6 +575,46 @@ impl App {
                             &font, 
                             &graphics::opposite_color(object.color())
                         );
+                    }
+
+                    if is_nodes_displayed {
+                        let track = object.track().iter_nodes();
+                        let opposite_color = graphics::opposite_color(object.color());
+
+                        for node in track {
+                            let text_location = make_text_location(*node.location());
+
+                            match node {
+                                TrackNode::Atom(_) => {
+                                    window.draw_text(
+                                        "A", 
+                                        &Point2::from(text_location), 
+                                        text_size, 
+                                        &font,
+                                        &opposite_color
+                                    );
+                                },
+                                TrackNode::Collision(node) => {
+                                    window.draw_text(
+                                        "C", 
+                                        &Point2::from(text_location), 
+                                        text_size, 
+                                        &font,
+                                        &opposite_color
+                                    );
+
+                                    window.draw_text(
+                                        "S", 
+                                        &Point2::from(make_text_location(
+                                            *node.src_track_atom.location())
+                                        ), 
+                                        text_size, 
+                                        &font,
+                                        &opposite_color
+                                    );
+                                }
+                            }
+                        }
                     }
 
                     if is_tracks_displayed {

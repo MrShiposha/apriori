@@ -27,8 +27,8 @@ messages! {
     #[cli(name = "h", about = "print message list")]
     message GlobalHelpShort {}
 
-    #[derive(Default)]
     #[cli(name = "shutdown", about = "shutdown the application")]
+    #[derive(Default)]
     message Shutdown {}
 
     #[cli(name = "run", about = "run the simulation")]
@@ -233,21 +233,34 @@ messages! {
     #[cli(name = "list-objects", about = "list all objects in the current session")]
     message ListObjects {}
 
-    #[cli(name = "names", about = "enable/disable scene's actors' names")]
-    message Names {
-        /// Disable names
+    #[cli(name = "info", about = "show/hide specific information")]
+    message Info {
+        /// Show/hide names
         #[structopt(short, long)]
-        pub disable: bool
-    }
+        pub names: bool,
 
-    #[cli(name = "tracks", about = "enable/disable objects' tracks")]
-    message Tracks {
-        /// Show tracks
+        /// Show/hide tracks
         #[structopt(short, long)]
-        pub disable: bool,
+        pub tracks: bool,
+
+        /// Show/hide nodes
+        #[structopt(long)]
+        pub nodes: bool,
 
         /// Set track step
         #[structopt(long, parse(try_from_str = cli::parse_time))]
-        pub step: Option<chrono::Duration>
+        pub track_step: Option<chrono::Duration>
+    }
+
+    #[cli(name = "interpolate", about = "[DEBUG] interpolate object's track")]
+    #[cfg(debug_assertions)]
+    message Interpolate {
+        /// Object's name
+        #[structopt(short, long)]
+        pub name: ObjectName,
+
+        /// Time
+        #[structopt(short, long, parse(try_from_str = cli::parse_time))]
+        pub time: chrono::Duration,
     }
 }

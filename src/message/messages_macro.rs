@@ -3,12 +3,12 @@
 macro_rules! messages {
     (
         $(
-            $(#[derive($derives:meta)])*
             #[cli(
                 name = $cli_name:literal
                 $(, about = $about:literal)?
                 $(, version = $version:literal)?)
             ]
+            $(#[$($attrs:ident)::+($attrs_meta:meta)])*
             message $name:ident {
                 $($tt:tt)*
             }
@@ -147,7 +147,11 @@ macro_rules! messages {
         }
 
         $(
-            #[derive(Debug, $($derives)*)]
+            // #[derive(Debug, $($derives)*)]
+            #[derive(Debug)]
+            $(
+                #[$($attrs)::+($attrs_meta)]
+            )*
             #[derive(structopt::StructOpt)]
             #[structopt(name = $cli_name $(, about = $about)? $(, version = $version)?)]
             pub struct $name {
