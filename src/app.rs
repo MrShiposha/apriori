@@ -203,8 +203,12 @@ impl App {
 
     fn handle_common_msg(&mut self, msg: Message, state: State) -> Result<()> {
         match msg {
-            Message::NewLayer(new_layer_msg) => self.new_layer(new_layer_msg),
-            Message::RemoveLayer(rm_layer_msg) => self.engine.remove_layer(rm_layer_msg.name),
+            Message::NewLayer(msg) => self.new_layer(msg),
+            Message::RemoveLayer(msg) => self.engine.remove_layer(&msg.name),
+            Message::RenameLayer(msg) => self.engine.rename_layer(
+                &msg.old_name,
+                &msg.new_name
+            ),
             Message::GlobalHelp(_) | Message::GlobalHelpShort(_) => {
                 let max_name = Message::cli_list()
                     .iter()
@@ -317,7 +321,7 @@ impl App {
                 Ok(())
             }
             Message::ListLayers(list_layers_msg) => self.list_layers(list_layers_msg),
-            Message::SelectLayer(msg) => self.engine.select_layer(msg.name),
+            Message::SelectLayer(msg) => self.engine.select_layer(&msg.name),
             // Message::ListSessions(_) => {
             //     println!("\n\t-- sessions list --");
             //     self.engine.print_session_list()
@@ -361,7 +365,7 @@ impl App {
     fn new_layer(&mut self, new_layer_msg: message::NewLayer) -> Result<()> {
         let layer_name = new_layer_msg.name;
 
-        if self.engine.is_layer_exists(&layer_name)? {
+        if self.engine.get_layer_id(&layer_name).is_ok() {
             return Err(make_error!(Error::Layer::LayerAlreadyExists(layer_name)));
         }
 

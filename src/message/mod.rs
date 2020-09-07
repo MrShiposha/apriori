@@ -116,6 +116,17 @@ messages! {
         pub name: LayerName
     }
 
+    #[cli(name = "rename-layer", about = "rename layer")]
+    message RenameLayer {
+        /// Layer's name to rename.
+        #[structopt(short, long)]
+        pub old_name: LayerName,
+
+        /// New layer's name.
+        #[structopt(short, long)]
+        pub new_name: LayerName
+    }
+
     #[cli(name = "active-layer", about = "show active layer name")]
     message ActiveLayer {}
 

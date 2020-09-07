@@ -37,30 +37,26 @@ impl<'t, 'storage> Layer<'t, 'storage> {
             .map_err(storage_map_err!(Error::Storage::Layer))
     }
 
-    pub fn is_layer_exists(&mut self, session_id: SessionId, layer_name: &LayerName) -> Result<bool> {
+    pub fn rename_layer(&mut self, layer_id: LayerId, new_layer_name: &LayerName) -> Result<()> {
         self.transaction
-            .query_one(
-                query!["SELECT {schema_name}.layer_id($1, $2);"],
-                &[&session_id, &layer_name]
+            .execute(
+                query!["CALL {schema_name}.rename_layer($1, $2)"],
+                &[&layer_id, &new_layer_name]
             )
-            .map(|row| {
-                row.try_get(0)
-                    .map(|_: LayerId| true)
-                    .unwrap_or(false)
-            })
+            .map(|_| {})
             .map_err(storage_map_err!(Error::Storage::Layer))
     }
 
-    pub fn get_layer_id(&mut self, session_id: SessionId, layer_name: LayerName) -> Result<LayerId> {
+    pub fn get_layer_id(&mut self, session_id: SessionId, layer_name: &LayerName) -> Result<LayerId> {
         let row = self.transaction
             .query_one(
                 query!["SELECT {schema_name}.layer_id($1, $2)"],
-                &[&session_id, &layer_name]
+                &[&session_id, layer_name]
             )
             .map_err(storage_map_err!(Error::Storage::Layer))?;
 
         row.try_get(0)
-            .map_err(|_| make_error![Error::Layer::LayerNotFound(layer_name)])
+            .map_err(|_| make_error![Error::Layer::LayerNotFound(layer_name.clone())])
     }
 
     pub fn get_main_layer(&mut self, session_id: SessionId) -> Result<LayerId> {
@@ -121,11 +117,26 @@ impl<'t, 'storage> Layer<'t, 'storage> {
             .map_err(storage_map_err!(Error::Storage::Layer))
     }
 
-    pub fn remove_layer(&mut self, session_id: SessionId, layer_name: LayerName) -> Result<()> {
+    pub fn layer_ancestors(&mut self, layer_id: LayerId) -> Result<Vec<LayerId>> {
+        let rows = self.transaction
+            .query(
+                query!["SELECT layer_id FROM {schema_name}.layer_ancestors($1)"],
+                &[&layer_id]
+            )
+            .map_err(storage_map_err!(Error::Storage::Layer))?;
+
+        Ok(
+            rows.into_iter()
+                .map(|row| row.get(0))
+                .collect()
+        )
+    }
+
+    pub fn remove_layer(&mut self, layer_id: LayerId) -> Result<()> {
         self.transaction
             .execute(
-                query!["CALL {schema_name}.remove_layer($1, $2)"],
-                &[&session_id, &layer_name]
+                query!["CALL {schema_name}.remove_layer($1)"],
+                &[&layer_id]
             )
             .map(|_| {})
             .map_err(storage_map_err!(Error::Storage::Layer))

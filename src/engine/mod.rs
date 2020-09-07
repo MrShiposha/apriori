@@ -155,15 +155,36 @@ impl Engine {
         Ok(())
     }
 
-    pub fn remove_layer(&mut self, layer_name: LayerName) -> Result<()> {
+    pub fn get_layer_id(&mut self, layer_name: &LayerName) -> Result<LayerId> {
+        let result;
+
         transaction! {
             self.storage_mgr => t {
-                let mut layer = t.layer();
+                result = t.layer().get_layer_id(self.session_id, layer_name);
+            }
+        }
 
-                if layer.is_layer_exists(self.session_id, &layer_name)? {
-                    layer.remove_layer(self.session_id, layer_name)?;
-                } else {
-                    warn!("the layer \"{}\" is not found", layer_name);
+        result
+    }
+
+    pub fn remove_layer(&mut self, layer_name: &LayerName) -> Result<()> {
+        transaction! {
+            self.storage_mgr => t {
+                match self.get_layer_id(layer_name) {
+                    Ok(layer_id) => {
+                        let mut layer = t.layer();
+                        let active_ancestors = layer.layer_ancestors(self.active_layer_id)?;
+
+                        if active_ancestors.contains(&layer_id) {
+                            error! {
+                                target: LOG_TARGET,
+                                "unable to remove active layer or it's ancestors"
+                            }
+                        } else {
+                            layer.remove_layer(layer_id)?;
+                        }
+                    },
+                    Err(err) => warn!("unable to remove a layer: {}", err)
                 }
             }
         }
@@ -171,16 +192,18 @@ impl Engine {
         Ok(())
     }
 
-    pub fn is_layer_exists(&mut self, name: &LayerName) -> Result<bool> {
-        let result;
-
+    pub fn rename_layer(&mut self, old_layer_name: &LayerName, new_layer_name: &LayerName) -> Result<()> {
         transaction! {
             self.storage_mgr => t {
-                result = t.layer().is_layer_exists(self.session_id, name);
+                let mut layer = t.layer();
+
+                let id = layer.get_layer_id(self.session_id, old_layer_name)?;
+
+                layer.rename_layer(id, new_layer_name)?;
             }
         }
 
-        result
+        Ok(())
     }
 
     pub fn active_layer_name(&mut self) -> Result<LayerName> {
@@ -291,7 +314,7 @@ impl Engine {
         Ok(())
     }
 
-    pub fn select_layer(&mut self, layer_name: LayerName) -> Result<()> {
+    pub fn select_layer(&mut self, layer_name: &LayerName) -> Result<()> {
         transaction! {
             self.storage_mgr => t {
                 let layer_id = t.layer().get_layer_id(self.session_id, layer_name)?;
