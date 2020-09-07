@@ -29,7 +29,7 @@ CREATE OR REPLACE FUNCTION {schema_name}.main_layer_id(
 AS $$
     BEGIN
         RETURN (
-            SELECT MAX(layer_id)
+            SELECT MIN(layer_id)
             FROM {schema_name}.layer
             WHERE session_fk_id=session_id
         );
