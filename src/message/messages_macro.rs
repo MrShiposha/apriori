@@ -15,6 +15,14 @@ macro_rules! messages {
         )+
 
         $(
+            fwd_messages {
+                $(
+                    message $fwd_name:ident($($fwd_tt:tt)*);
+                ),+
+            }
+        )?
+
+        $(
             submessages {
                 $(
                     $submsg_name:ident($submsg_path:path)
@@ -27,6 +35,9 @@ macro_rules! messages {
         #[derive(Debug)]
         pub enum Message {
             $($name($name)),+
+            $(
+                , $($fwd_name($($fwd_tt)*)),+
+            )?
             $(
                 , $($submsg_name($submsg_path)),+
             )?
@@ -120,19 +131,36 @@ macro_rules! messages {
                 }
             }
 
-            pub fn cli_autocomplete<T: From<&'static str>>(input_msg: &str) ->Vec<T> {
-                CLI_MESSAGES.iter()
-                    .filter(|msg| msg.starts_with(input_msg))
-                    .map(|msg| (*msg).into())
-                    .collect::<Vec<_>>()
+            pub fn cli_autocomplete<T: From<&'static str>>(input_msg: &str) -> Vec<T> {
+                use std::iter::Extend;
+
+                let mut result = vec![];
+
+                $(
+                    $(
+                        let mut sub_msg_result = <$submsg_path>::cli_autocomplete(input_msg);
+                        result.append(&mut sub_msg_result);
+                    )+
+                )?
+
+                result.extend(
+                    CLI_MESSAGES.iter()
+                        .filter(|msg| msg.starts_with(input_msg))
+                        .map(|msg| (*msg).into())
+                );
+
+                result
             }
 
             pub fn get_cli_name(&self) -> &'static str {
                 match self {
                     $(Message::$name(_) => <$name>::get_cli_name()),+
                     $(
-                        , $(Message::$submsg_name(msg) => msg.get_cli_name()),+
+                        , $(Message::$fwd_name(_) => concat!("/fwd message: \"", stringify![$fwd_name], "\"/")),+
                     )?
+                    $(
+                        , $(Message::$submsg_name(msg) => msg.get_cli_name()),+
+                    )?,
                 }
             }
         }
@@ -220,6 +248,7 @@ macro_rules! messages {
             Err(err) => return Err(err)
         })*
 
+        #[allow(unused_braces)]
         $else_block
     };
 

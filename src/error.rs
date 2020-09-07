@@ -1,6 +1,6 @@
 use super::{
     message,
-    r#type::{ObjectName, AttractorName, TimeFormat},
+    r#type::{LayerName, ObjectName, TimeFormat},
 };
 use std::fmt;
 use std::ops::Range;
@@ -29,6 +29,7 @@ pub enum Error {
     Sync(Description),
     Io(std::io::Error),
     ConnectionPool(r2d2::Error),
+    Layer(Layer),
     MissingMessage,
     UnknownMessage(String),
     UnexpectedMessage(super::message::Message),
@@ -40,6 +41,12 @@ pub enum Error {
     Storage(Storage),
     Scene(Scene),
     Physics(Physics),
+}
+
+#[derive(Debug)]
+pub enum Layer {
+    LayerAlreadyExists(LayerName),
+    LayerNotFound(LayerName),
 }
 
 #[derive(Debug)]
@@ -56,6 +63,7 @@ pub enum Storage {
     MasterStorageRaw(postgres::Error),
     OccupiedSpacesRaw(rusqlite::Error),
     SetupSchema(postgres::Error),
+    Transaction(postgres::Error),
     SessionCreate(postgres::Error),
     SessionUpdateAccessTime(postgres::Error),
     SessionSave(postgres::Error),
@@ -65,6 +73,7 @@ pub enum Storage {
     SessionList(postgres::Error),
     SessionGet(postgres::Error),
     SessionDelete(postgres::Error),
+    Layer(postgres::Error),
     AddObject(postgres::Error),
     RenameObject(postgres::Error),
     ObjectList(postgres::Error),
@@ -81,7 +90,6 @@ pub enum Scene {
     UncomputedTrackPart(chrono::Duration, Range<chrono::Duration>),
     ObjectAlreadyExists(ObjectName),
     ObjectNotFound(ObjectName),
-    AttractorAlreadyExists(AttractorName),
 }
 
 #[derive(Debug)]
@@ -108,6 +116,12 @@ impl From<clap::Error> for Error {
 impl From<Parse> for Error {
     fn from(err: Parse) -> Self {
         Self::Parse(err)
+    }
+}
+
+impl From<Layer> for Error {
+    fn from(err: Layer) -> Self {
+        Self::Layer(err)
     }
 }
 
@@ -145,6 +159,7 @@ impl fmt::Display for Error {
             Error::Sync(desc) => write!(f, "[sync] {}", desc),
             Error::Io(err) => write!(f, "[io] {}", err),
             Error::ConnectionPool(err) => write!(f, "[connection pool] {}", err),
+            Error::Layer(err) => write!(f, "[layer] {}", err),
             Error::MissingMessage => write!(f, "[missing message]"),
             Error::UnknownMessage(msg) => write!(f, "[unknown message] {}", msg),
             Error::UnexpectedMessage(msg) => {
@@ -192,6 +207,15 @@ impl From<regex::Error> for Error {
     }
 }
 
+impl fmt::Display for Layer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LayerAlreadyExists(name) => write!(f, "layer \"{}\" already exists", name),
+            Self::LayerNotFound(name) => write!(f, "layer \"{}\" is not found", name),
+        }
+    }
+}
+
 impl fmt::Display for Parse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -199,7 +223,7 @@ impl fmt::Display for Parse {
             Self::Vector(desc) => write!(f, "unable to parse vector: {}\nHINT: vector format is {{x}},{{y}},{{z}}", desc),
             Self::Color(err) => write!(f, "unable to parse color: {}\nHINT: this app uses CSS color format", err),
             Self::Time(desc) => write!(
-                f, "unable to parse time: {}\nHINT: type `{}` to achieve information on how to input a time data.", 
+                f, "unable to parse time: {}\nHINT: type `{}` to achieve information on how to input a time data.",
                 desc,
                 message::TimeFormat::get_cli_name()
             ),
@@ -238,6 +262,7 @@ impl fmt::Display for Storage {
             Self::MasterStorageRaw(err) => write!(f, "[master] {}", err),
             Self::OccupiedSpacesRaw(err) => write!(f, "[oss] {}", err),
             Self::SetupSchema(err) => write!(f, "unable to setup schema: {}", err),
+            Self::Transaction(err) => write!(f, "unable to start the transaction: {}", err),
             Self::SessionCreate(err) => write!(f, "unable to create new session: {}", err),
             Self::SessionUpdateAccessTime(err) => {
                 write!(f, "unable to update session access time: {}", err)
@@ -258,6 +283,7 @@ impl fmt::Display for Storage {
             Self::DeleteFutureOccupiedSpace(err) => write!(f, "unable to delete future occupied spaces: {}", err),
             Self::DeletePastOccupiedSpace(err) => write!(f, "unable to delete past occupied spaces: {}", err),
             Self::ReadOccupiedSpace(err) => write!(f, "unable to read occupied space: {}", err),
+            Self::Layer(err) => write!(f, "layer error: {}", err),
         }
     }
 }
@@ -283,9 +309,6 @@ impl fmt::Display for Scene {
             },
             Self::ObjectNotFound(obj_name) => {
                 write!(f, "`{}`: object not found", obj_name)
-            },
-            Self::AttractorAlreadyExists(attr_name) => {
-                write!(f, "`{}`: attractor already exists", attr_name)
             },
         }
     }

@@ -1,15 +1,17 @@
 use super::{
-    cli, graphics,
+    cli,
+    make_error,
+    engine::Engine,
+    layer,
     message::{self, Message},
     r#type::{Color, RawTime, TimeFormat, TimeUnit},
-    scene::{physics::Engine, SceneManager, track::Track},
     shared_access,
     Error, Result, Shared,
     logger::LOGGER,
 };
 use kiss3d::{
     camera::{
-        Camera,
+        // Camera,
         FirstPerson,
     },
     light::Light,
@@ -18,28 +20,22 @@ use kiss3d::{
     text::Font,
     window::{CanvasSetup, NumSamples, Window},
 };
-use lazy_static::lazy_static;
 use log::{info, error};
-use nalgebra::{Point2, Point3, Vector2};
+use nalgebra::{Point2, Point3, /*Vector2*/};
 use std::{
     fmt::{self, Write},
     path::PathBuf,
     sync::mpsc::TryRecvError,
 };
 use structopt::StructOpt;
+use layer::Layer;
+use ptree;
 
 const LOG_TARGET: &'static str = "application";
 pub const APP_NAME: &'static str = "apriori";
 
 const CLOSE_MESSAGE: &'static str =
     "Simulation is completed.\nTo close the application, run `shutdown` message.";
-
-lazy_static! {
-    pub static ref APP_CLI_PROMPT: String = format!("{}> ", APP_NAME);
-    pub static ref ACCESS_UPDATE_TIME: chrono::Duration = chrono::Duration::seconds(30);
-    pub static ref SESSION_MAX_HANG_TIME: chrono::Duration =
-        chrono::Duration::seconds(ACCESS_UPDATE_TIME.num_seconds() + 10);
-}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum State {
@@ -80,20 +76,11 @@ impl fmt::Display for State {
 
 pub struct App {
     window: Window,
+    engine: Engine,
     camera: FirstPerson,
     state: Shared<State>,
-    real_time: chrono::Duration,
-    last_session_update_time: chrono::Duration,
-    virtual_time: chrono::Duration,
-    virtual_time_step: chrono::Duration,
-    frame_delta_time: chrono::Duration,
+    new_layer: Option<Layer>,
     is_stats_enabled: bool,
-    frame_deltas_ms_sum: usize,
-    frame_count: usize,
-    scene_mgr: SceneManager,
-    engine: Engine,
-    object_index: usize,
-    attractor_index: usize,
     is_names_displayed: bool,
     is_tracks_displayed: bool,
     track_step: chrono::Duration,
@@ -120,24 +107,17 @@ impl App {
         camera.rebind_left_key(Some(Key::A));
         camera.rebind_right_key(Some(Key::D));
 
-        let scene = window.scene().clone();
+        // let scene = window.scene().clone();
+
+        let engine = Engine::init().expect("unable to initialize the engine");
 
         Self {
             window,
+            engine,
             camera: camera,
             state: State::Paused.into(),
-            real_time: chrono::Duration::zero(),
-            last_session_update_time: chrono::Duration::zero(),
-            virtual_time: chrono::Duration::zero(),
-            virtual_time_step: chrono::Duration::seconds(1),
-            frame_delta_time: chrono::Duration::milliseconds(0),
+            new_layer: None,
             is_stats_enabled: true,
-            frame_deltas_ms_sum: 0,
-            frame_count: 0,
-            scene_mgr: SceneManager::new(scene),
-            engine: Engine::new().expect("unable to initialize physics engine"),
-            object_index: 0,
-            attractor_index: 0,
             is_names_displayed: false,
             is_tracks_displayed: false,
             track_step: chrono::Duration::milliseconds(500),
@@ -146,54 +126,36 @@ impl App {
 
     pub fn run(&mut self, history: Option<PathBuf>) {
         let cli = cli::Observer::new(self.state.share(), history);
-        let one_second_nanos = chrono::Duration::seconds(1).num_nanoseconds().unwrap();
 
         loop {
             let loop_begin = time::precise_time_ns();
 
-            if let Err(err) = self.update_session_access_time() {
-                error! {
-                    target: LOG_TARGET,
-                    "{}", err
-                }
-            }
-
             self.handle_window_events();
 
             let state = *shared_access![self.state];
+            let advance_vtime;
             match state {
                 State::Simulating => {
-                    let delta_nanos = self.frame_delta_time.num_nanoseconds().unwrap();
-                    let vt_step_nanos = self.virtual_time_step.num_nanoseconds().unwrap();
-                    let step = delta_nanos * vt_step_nanos / one_second_nanos;
-                    self.virtual_time = self.virtual_time + chrono::Duration::nanoseconds(step);
-
-                    self.simulate_frame();
-                    self.render_frame();
-                    self.process_console(&cli);
+                    self.engine.compute_locations();
+                    advance_vtime = true;
                 }
-                State::Paused => {
-                    self.simulate_frame();
-                    self.render_frame();
-                    self.process_console(&cli);
-                }
+                State::Paused => advance_vtime = false,
                 State::Completed => {
                     self.draw_text(CLOSE_MESSAGE, Point2::origin(), Color::new(1.0, 0.0, 0.0));
-                    self.process_console(&cli);
-
-                    self.window.render_with_camera(&mut self.camera);
+                    self.is_stats_enabled = false;
+                    advance_vtime = false;
                 }
                 State::Off => break,
             }
 
+            self.render_frame();
+            self.process_console(&cli);
+
             let loop_end = time::precise_time_ns();
             let loop_time = loop_end - loop_begin;
 
-            self.frame_delta_time = chrono::Duration::nanoseconds(loop_time as RawTime);
-            self.frame_deltas_ms_sum += self.frame_delta_time.num_milliseconds() as usize;
-            self.frame_count += 1;
-
-            self.real_time = self.real_time + self.frame_delta_time;
+            let frame_delta_ns = loop_time as RawTime;
+            self.engine.advance_time(frame_delta_ns, advance_vtime);
         }
 
         cli.join();
@@ -203,7 +165,46 @@ impl App {
         let state = *shared_access![self.state];
         assert_ne!(state, State::Off);
 
-        match message {
+        match self.new_layer {
+            Some(_) => self.handle_layer_msg(message),
+            None => self.handle_common_msg(message, state),
+        }
+
+
+    }
+
+    fn handle_layer_msg(&mut self, msg: Message) -> Result<()> {
+        use message::layer::Message as LayerMsg;
+
+        match msg {
+            Message::Layer(layer_msg) => {
+                match layer_msg {
+                    LayerMsg::AddObject(_) => {
+                        log::info! {
+                            target: LOG_TARGET,
+                            "[layer] add object"
+                        }
+                    }
+                }
+               Ok(())
+            },
+            Message::Submit(_) => self.submit_layer(),
+            Message::Cancel(_) => {
+                let layer = self.new_layer.take().unwrap();
+
+                println!("--- cancel layer \"{}\" ---", layer.name());
+
+                Ok(())
+            }
+            Message::Shutdown(_) | Message::ShutdownShort(_) => self.shutdown(),
+            _ => Err(Error::UnexpectedMessage(msg))
+        }
+    }
+
+    fn handle_common_msg(&mut self, msg: Message, state: State) -> Result<()> {
+        match msg {
+            Message::NewLayer(new_layer_msg) => self.new_layer(new_layer_msg),
+            Message::RemoveLayer(rm_layer_msg) => self.engine.remove_layer(rm_layer_msg.name),
             Message::GlobalHelp(_) | Message::GlobalHelpShort(_) => {
                 let max_name = Message::cli_list()
                     .iter()
@@ -231,7 +232,7 @@ impl App {
                 self.continue_simulation()
             }
             Message::Pause(_) | Message::PauseShort(_) if state.is_run() => self.pause_simulation(),
-            Message::Shutdown(_) => self.shutdown(),
+            Message::Shutdown(_) | Message::ShutdownShort(_) => self.shutdown(),
             Message::ListDisabledLogTargets(_) => {
                 println!("\n\t-- disabled log targets --");
                 shared_access![LOGGER].print_disabled_targets();
@@ -252,7 +253,7 @@ impl App {
                         shared_access![mut LOGGER].enable_target(msg.target.unwrap());
                     }
                 }
-                
+
                 Ok(())
             }
             Message::LogFilter(msg) => {
@@ -307,51 +308,82 @@ impl App {
             }
             Message::VirtualTimeStep(msg) => self.handle_virtual_time_step(state, msg),
             Message::VirtualTime(msg) => self.handle_virtual_time(state, msg),
-            Message::GetFrameDeltaTime(_) => {
-                println!("{}", TimeFormat::FrameDelta(self.frame_delta_time));
+            Message::ActiveLayer(_) => {
+                println!("{}", self.engine.active_layer_name()?);
                 Ok(())
             }
-            Message::GetFrameCount(_) => {
-                println!("{}", self.frame_count);
+            Message::CurrentLayer(_) => {
+                println!("{}", self.engine.current_layer_name()?);
                 Ok(())
             }
-            Message::GetFpms(_) => {
-                println!("{}", self.frame_per_ms());
-                Ok(())
-            }
-            Message::ListSessions(_) => {
-                println!("\n\t-- sessions list --");
-                self.engine.print_session_list()
-            }
-            Message::GetSession(_) => self.engine.print_current_session_name(),
-            Message::NewSession(msg) => self.engine.new_session(msg.name),
-            Message::SaveSession(msg) => self.engine.save_current_session(msg.name),
-            Message::LoadSession(msg) => self.engine.load_session(msg.name),
-            Message::RenameSession(msg) => self.engine.rename_session(&msg.old_name, &msg.new_name),
-            Message::DeleteSession(msg) => self.engine.delete_session(&msg.name),
-            Message::AddObject(msg) if state.is_run() => self.handle_add_object(msg),
-            Message::RenameObject(msg) if state.is_run() => self.handle_rename_object(msg),
-            Message::ListObjects(_) => {
-                println!("\n\t-- object list --");
-                self.engine.print_object_list()
-            },
-            Message::AddAttractor(msg) if state.is_run() => self.handler_add_attractor(msg),
+            Message::ListLayers(list_layers_msg) => self.list_layers(list_layers_msg),
+            Message::SelectLayer(msg) => self.engine.select_layer(msg.name),
+            // Message::ListSessions(_) => {
+            //     println!("\n\t-- sessions list --");
+            //     self.engine.print_session_list()
+            // }
+            // Message::GetSession(_) => self.engine.print_current_session_name(),
+            // Message::NewSession(msg) => self.engine.new_session(msg.name),
+            // Message::SaveSession(msg) => self.engine.save_current_session(msg.name),
+            // Message::LoadSession(msg) => self.engine.load_session(msg.name),
+            // Message::RenameSession(msg) => self.engine.rename_session(&msg.old_name, &msg.new_name),
+            // Message::DeleteSession(msg) => self.engine.delete_session(&msg.name),
+            // Message::AddObject(msg) if state.is_run() => self.handle_add_object(msg),
+            // Message::RenameObject(msg) if state.is_run() => self.handle_rename_object(msg),
+            // Message::ListObjects(_) => {
+            //     println!("\n\t-- object list --");
+            //     self.engine.print_object_list()
+            // },
             Message::Names(msg) => {
                 self.is_names_displayed = !msg.disable;
 
                 Ok(())
             }
             Message::Tracks(msg) => {
-                self.is_tracks_displayed = !msg.disable; 
+                self.is_tracks_displayed = !msg.disable;
 
                 if let Some(step) = msg.step {
-                    self.track_step = step;
+                    if step >= chrono::Duration::zero() {
+                        self.track_step = step;
+                    } else {
+                        return Err(Error::VirtualTime(
+                            "track step must be greater than zero".into()
+                        ));
+                    }
                 }
 
                 Ok(())
             }
             unexpected => return Err(Error::UnexpectedMessage(unexpected)),
         }
+    }
+
+    fn new_layer(&mut self, new_layer_msg: message::NewLayer) -> Result<()> {
+        let layer_name = new_layer_msg.name;
+
+        if self.engine.is_layer_exists(&layer_name)? {
+            return Err(make_error!(Error::Layer::LayerAlreadyExists(layer_name)));
+        }
+
+        println!("--- creating new layer \"{}\" ---", layer_name);
+
+        self.new_layer = Some(Layer::new(layer_name));
+        Ok(())
+    }
+
+    fn submit_layer(&mut self) -> Result<()> {
+        let layer = self.new_layer.take().unwrap();
+
+        println!("--- submit layer \"{}\" ---", layer.name());
+        self.engine.add_layer(layer)
+        // TODO ADD CHECKS
+    }
+
+    fn list_layers(&mut self, _: message::ListLayers) -> Result<()> {
+        let layers_tree = self.engine.get_session_layers()?;
+
+        ptree::print_tree(&layers_tree)
+            .map_err(|err| Error::Io(err))
     }
 
     fn check_window_opened(&mut self) {
@@ -374,7 +406,8 @@ impl App {
 
     fn shutdown(&mut self) -> Result<()> {
         *shared_access![mut self.state] = State::Off;
-        self.engine.shutdown()
+        // self.engine.shutdown()
+        Ok(())
     }
 
     fn continue_simulation(&mut self) -> Result<()> {
@@ -387,40 +420,26 @@ impl App {
         Ok(())
     }
 
-    fn handle_add_object(&mut self, msg: message::AddObject) -> Result<()> {
-        let object_index = self.object_index;
-        self.object_index += 1;
+    // fn handle_add_object(&mut self, msg: message::AddObject) -> Result<()> {
+    //     let object_index = self.object_index;
+    //     self.object_index += 1;
 
-        let default_name = format!("object-{}", object_index);
+    //     let default_name = format!("object-{}", object_index);
 
-        self.scene_mgr.add_object(
-            &mut self.engine, 
-            msg, 
-            self.virtual_time,
-            default_name
-        )?;
+    //     self.scene_mgr.add_object(
+    //         &mut self.engine,
+    //         msg,
+    //         self.virtual_time,
+    //         default_name
+    //     )?;
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
-    fn handler_add_attractor(&mut self,  msg: message::AddAttractor) -> Result<()> {
-        let attractor_index = self.attractor_index;
-        self.attractor_index += 1;
-
-        let default_name = format!("attractor-{}", attractor_index);
-
-        self.scene_mgr.add_attractor(
-            &mut self.engine,
-            msg, 
-            default_name
-        )?;
-
-        Ok(())
-    }
-
-    fn handle_rename_object(&mut self, msg: message::RenameObject) -> Result<()> {
-        self.scene_mgr.rename_object(&mut self.engine, msg.old_name, msg.new_name)
-    }
+    // fn handle_rename_object(&mut self, msg: message::RenameObject) -> Result<()> {
+        // self.scene_mgr.rename_object(&mut self.engine, msg.old_name, msg.new_name)
+        // Ok(())
+    // }
 
     fn handle_virtual_time_step(
         &mut self,
@@ -429,19 +448,17 @@ impl App {
     ) -> Result<()> {
         match msg.step {
             Some(step) if state.is_run() => {
-                if msg.reverse {
-                    self.virtual_time_step = -step;
+                let origin = chrono::Duration::zero();
+
+                if step >= origin {
+                    self.engine.set_virtual_step(step);
                 } else {
-                    self.virtual_time_step = step;
+                    return Err(Error::VirtualTime(
+                        "setting virtual time step that lower than zero is forbidden".into()
+                    ));
                 }
             }
-            None => {
-                if msg.reverse {
-                    println!("{}", TimeFormat::VirtualTimeShort(-self.virtual_time_step));
-                } else {
-                    println!("{}", TimeFormat::VirtualTimeShort(self.virtual_time_step));
-                }
-            }
+            None => println!("{}", TimeFormat::VirtualTimeShort(self.engine.virtual_step())),
             _ => {
                 return Err(Error::VirtualTime(
                     "setting virtual time step after the simulation has complete is forbidden"
@@ -454,22 +471,20 @@ impl App {
     }
 
     fn handle_virtual_time(&mut self, state: State, msg: message::VirtualTime) -> Result<()> {
+        let origin = chrono::Duration::zero();
+
         match msg.time {
             Some(time) if state.is_run() => {
-                if msg.reverse {
-                    self.virtual_time = -time;
+                if time >= origin {
+                    self.engine.set_virtual_time(time);
                 } else {
-                    self.virtual_time = time;
+                    return Err(Error::VirtualTime(
+                        "setting virtual time that lower than zero is forbidden".into()
+                    ));
                 }
             }
-            None if state.is_run() && msg.origin => self.virtual_time = chrono::Duration::zero(),
-            None if !msg.origin => {
-                if msg.reverse {
-                    println!("{}", TimeFormat::VirtualTimeShort(-self.virtual_time));
-                } else {
-                    println!("{}", TimeFormat::VirtualTimeShort(self.virtual_time));
-                }
-            }
+            None if state.is_run() && msg.origin => self.engine.set_virtual_time(chrono::Duration::zero()),
+            None if !msg.origin => println!("{}", TimeFormat::VirtualTimeLong(self.engine.virtual_time())),
             _ => {
                 return Err(Error::VirtualTime(
                     "setting virtual time after the simulation has complete is forbidden".into(),
@@ -494,54 +509,54 @@ impl App {
         self.draw_stats();
     }
 
-    fn simulate_frame(&mut self) {
-        self.scene_mgr.query_objects_by_time(
-            &mut self.engine, 
-            &self.virtual_time, 
-            {
-                let is_names_displayed = self.is_names_displayed;
-                let is_tracks_displayed = self.is_tracks_displayed;
-                let track_step = self.track_step;
+    // fn simulate_frame(&mut self) {
+        // self.scene_mgr.query_objects_by_time(
+        //     &mut self.engine,
+        //     &self.virtual_time,
+        //     {
+        //         let is_names_displayed = self.is_names_displayed;
+        //         let is_tracks_displayed = self.is_tracks_displayed;
+        //         let track_step = self.track_step;
 
-                let window = &mut self.window;
-                let window_size = Vector2::new(window.width() as f32, window.height() as f32);
-                let hidpi_factor = window.hidpi_factor() as f32;
-                let text_size = 85.0;
-                let half_text_size = text_size / 2.0;
-                let quarter_text_size = half_text_size / 2.0;
-                let font = Font::default();
+        //         let window = &mut self.window;
+        //         let window_size = Vector2::new(window.width() as f32, window.height() as f32);
+        //         let hidpi_factor = window.hidpi_factor() as f32;
+        //         let text_size = 85.0;
+        //         let half_text_size = text_size / 2.0;
+        //         let quarter_text_size = half_text_size / 2.0;
+        //         let font = Font::default();
 
-                let camera = &mut self.camera;
+        //         let camera = &mut self.camera;
 
-                move |object, location| {
-                    if is_names_displayed {
-                        let mut text_location = camera.project(
-                            &Point3::from(location), 
-                            &window_size
-                        ).scale(hidpi_factor) - Vector2::new(quarter_text_size, -half_text_size);
-                        text_location[1] = window_size[1] * hidpi_factor - text_location[1];
+        //         move |object, location| {
+        //             if is_names_displayed {
+        //                 let mut text_location = camera.project(
+        //                     &Point3::from(location),
+        //                     &window_size
+        //                 ).scale(hidpi_factor) - Vector2::new(quarter_text_size, -half_text_size);
+        //                 text_location[1] = window_size[1] * hidpi_factor - text_location[1];
 
-                        window.draw_text(
-                            format!("+ {}", object.name()).as_ref(),
-                            &Point2::from(text_location), 
-                            text_size, 
-                            &font, 
-                            &graphics::opposite_color(object.color())
-                        );
-                    }
+        //                 window.draw_text(
+        //                     format!("+ {}", object.name()).as_ref(),
+        //                     &Point2::from(text_location),
+        //                     text_size,
+        //                     &font,
+        //                     &graphics::opposite_color(object.color())
+        //                 );
+        //             }
 
-                    if is_tracks_displayed {
-                        Self::draw_track(
-                            window, 
-                            &Point3::from(*object.color()), 
-                            object.track(), 
-                            track_step
-                        );
-                    }
-                }
-            }
-        );
-    }
+        //             if is_tracks_displayed {
+        //                 Self::draw_track(
+        //                     window,
+        //                     &Point3::from(*object.color()),
+        //                     object.track(),
+        //                     track_step
+        //                 );
+        //             }
+        //         }
+        //     }
+        // );
+    // }
 
     fn handle_window_events(&mut self) {
         for event in self.window.events().iter() {
@@ -559,17 +574,17 @@ impl App {
         }
     }
 
-    fn update_session_access_time(&mut self) -> Result<()> {
-        if self.real_time.num_milliseconds()
-            >= (self.last_session_update_time.num_milliseconds()
-                + ACCESS_UPDATE_TIME.num_milliseconds())
-        {
-            self.engine.update_session_access_time()?;
-            self.last_session_update_time = self.real_time;
-        }
+    // fn update_session_access_time(&mut self) -> Result<()> {
+    //     if self.real_time.num_milliseconds()
+    //         >= (self.last_session_update_time.num_milliseconds()
+    //             + ACCESS_UPDATE_TIME.num_milliseconds())
+    //     {
+    //         // self.engine.update_session_access_time()?;
+    //         self.last_session_update_time = self.real_time;
+    //     }
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     fn handle_key(&mut self, key: Key, action: Action, modifiers: Modifiers) -> Result<()> {
         match key {
@@ -584,15 +599,15 @@ impl App {
             Key::Left
                 if matches![action, Action::Press] && shared_access![self.state].is_paused() =>
             {
-                self.virtual_time = self.virtual_time - self.virtual_time_step;
-                self.simulate_frame();
+                let vtime = self.engine.virtual_time() - self.engine.virtual_step();
+                self.engine.set_virtual_time(vtime);
                 Ok(())
             }
             Key::Right
                 if matches![action, Action::Press] && shared_access![self.state].is_paused() =>
             {
-                self.virtual_time = self.virtual_time + self.virtual_time_step;
-                self.simulate_frame();
+                let vtime = self.engine.virtual_time() + self.engine.virtual_step();
+                self.engine.set_virtual_time(vtime);
                 Ok(())
             }
             Key::C if modifiers.contains(Modifiers::Control) && matches![action, Action::Press] => {
@@ -627,10 +642,6 @@ impl App {
         }
     }
 
-    pub fn frame_per_ms(&self) -> f32 {
-        self.frame_deltas_ms_sum as f32 / self.frame_count as f32
-    }
-
     fn draw_state_text(&mut self) {
         let state = *shared_access![self.state];
         self.draw_text(
@@ -645,30 +656,30 @@ impl App {
 
         let mut stats_text = String::new();
 
-        writeln!(&mut stats_text, "frame #{}", self.frame_count).unwrap();
+        writeln!(&mut stats_text, "frame #{}", self.engine.frame()).unwrap();
 
         writeln!(
             &mut stats_text,
             "virtual time: {}",
-            TimeFormat::VirtualTimeLong(self.virtual_time)
+            TimeFormat::VirtualTimeLong(self.engine.virtual_time())
         )
         .unwrap();
 
         writeln!(
             &mut stats_text,
             "virtual time step: {}",
-            TimeFormat::VirtualTimeShort(self.virtual_time_step)
+            TimeFormat::VirtualTimeShort(self.engine.virtual_step())
         )
         .unwrap();
 
         writeln!(
             &mut stats_text,
             "frame delta time: {}",
-            TimeFormat::FrameDelta(self.frame_delta_time)
+            TimeFormat::FrameDelta(self.engine.last_frame_delta())
         )
         .unwrap();
 
-        writeln!(&mut stats_text, "frame per ms: {}", self.frame_per_ms()).unwrap();
+        writeln!(&mut stats_text, "frame avg ms: {}", self.engine.frame_avg_time_ms()).unwrap();
 
         self.draw_text(&stats_text, pos, Color::new(1.0, 0.0, 1.0));
     }
@@ -680,23 +691,23 @@ impl App {
         self.window.draw_text(text, &pos, scale, &font, &color);
     }
 
-    fn draw_track(window: &mut Window, color: &Point3<f32>, track: &Track, step: chrono::Duration) {
-        let mut next_time = track.time_start() + step;
-        
-        let mut last_location = *shared_access![track.node_start()].atom_start().location();
-        while track.computed_range().contains(&next_time) {
-            let new_location = track.interpolate(&next_time).unwrap();
+    // fn draw_track(window: &mut Window, color: &Point3<f32>, track: &Track, step: chrono::Duration) {
+    //     let mut next_time = track.time_start() + step;
 
-            window.draw_line(
-                &Point3::from(last_location), 
-                &Point3::from(new_location), 
-                color
-            );
+    //     let mut last_location = *shared_access![track.node_start()].atom_start().location();
+    //     while track.computed_range().contains(&next_time) {
+    //         let new_location = track.interpolate(&next_time).unwrap();
 
-            next_time = next_time + step;
-            last_location = new_location;
-        }
-    }
+    //         window.draw_line(
+    //             &Point3::from(last_location),
+    //             &Point3::from(new_location),
+    //             color
+    //         );
+
+    //         next_time = next_time + step;
+    //         last_location = new_location;
+    //     }
+    // }
 }
 
 #[derive(StructOpt)]

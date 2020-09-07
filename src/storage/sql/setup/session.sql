@@ -24,8 +24,11 @@ AS $$
         new_session_id integer;
     BEGIN
         INSERT INTO {schema_name}.session
-        VALUES(DEFAULT, name, now(), true) 
+        VALUES(DEFAULT, name, now(), true)
         RETURNING session_id INTO new_session_id;
+
+        INSERT INTO {schema_name}.layer
+        VALUES(DEFAULT, new_session_id, 'main', 0);
 
         RETURN new_session_id;
     END

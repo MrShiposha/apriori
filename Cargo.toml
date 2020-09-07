@@ -27,3 +27,4 @@ postgres-types = { version = "*", features=["derive"] }
 time = "*"
 clap = "*"
 nalgebra = "*"
+ptree = "0.3.0"

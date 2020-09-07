@@ -5,20 +5,17 @@ use {
         cli,
         r#type::{
             self,
-            Color,
-            Distance,
-            Mass,
-            GravityCoeff,
             SessionName,
+            LayerName,
             ObjectName,
-            AttractorName,
-            Vector,
         },
     }
 };
 
 #[macro_use]
 mod messages_macro;
+
+pub mod layer;
 
 messages! {
     #[cli(name = "help", about = "print message list")]
@@ -30,6 +27,9 @@ messages! {
     #[derive(Default)]
     #[cli(name = "shutdown", about = "shutdown the application")]
     message Shutdown {}
+
+    #[cli(name = "q", about = "shutdown the application")]
+    message ShutdownShort {}
 
     #[cli(name = "run", about = "run the simulation")]
     message Run {}
@@ -89,35 +89,54 @@ messages! {
         /// New virtual time step.
         #[structopt(short, long, allow_hyphen_values = true, parse(try_from_str = cli::parse_time))]
         pub step: Option<chrono::Duration>,
-
-        /// Reverse time step.
-        #[structopt(short, long)]
-        pub reverse: bool
     }
 
     #[cli(name = "vt", about = "get/set virtual time")]
     message VirtualTime {
         /// Set virtual time to origin
-        #[structopt(short, long, conflicts_with_all = &["time", "reverse"])]
+        #[structopt(short, long, conflicts_with = "time")]
         pub origin: bool,
 
         /// New virtual time.
         #[structopt(short, long, allow_hyphen_values = true, parse(try_from_str = cli::parse_time))]
         pub time: Option<chrono::Duration>,
-
-        /// Reverse time.
-        #[structopt(short, long)]
-        pub reverse: bool
     }
 
-    #[cli(name = "frame-delta-time", about = "last frame delta time")]
-    message GetFrameDeltaTime {}
+    #[cli(name = "new-layer", about = "create new layer")]
+    message NewLayer {
+        /// New layer's name.
+        #[structopt(short, long)]
+        pub name: LayerName
+    }
 
-    #[cli(name = "frames", about = "get current frame count")]
-    message GetFrameCount {}
+    #[cli(name = "rm-layer", about = "remove layer")]
+    message RemoveLayer {
+        /// Layer's name to remove.
+        #[structopt(short, long)]
+        pub name: LayerName
+    }
 
-    #[cli(name = "fpms", about = "get frame per ms")]
-    message GetFpms {}
+    #[cli(name = "active-layer", about = "show active layer name")]
+    message ActiveLayer {}
+
+    #[cli(name = "current-layer", about = "show current layer name depending on the current virtual time")]
+    message CurrentLayer {}
+
+    #[cli(name = "list-layers", about = "list layers in the current session")]
+    message ListLayers {}
+
+    #[cli(name = "select-layer", about = "select new active layer")]
+    message SelectLayer {
+        /// Name of the layer to select.
+        #[structopt(short, long)]
+        pub name: LayerName
+    }
+
+    #[cli(name = "submit", about = "submit edition")]
+    message Submit {}
+
+    #[cli(name = "cancel", about = "cancel edition")]
+    message Cancel {}
 
     #[cli(name = "list-sessions", about = "list all sessions")]
     message ListSessions {}
@@ -164,41 +183,41 @@ messages! {
         pub name: SessionName
     }
 
-    #[cli(name = "add-obj", about = "add new object to the scene")]
-    message AddObject {
-        /// Object's name.
-        #[structopt(short, long)]
-        pub name: Option<ObjectName>,
+    // #[cli(name = "add-obj", about = "add new object to the scene")]
+    // message AddObject {
+    //     /// Object's name.
+    //     #[structopt(short, long)]
+    //     pub name: Option<ObjectName>,
 
-        /// Object's location.
-        #[structopt(short, long, allow_hyphen_values = true, parse(try_from_str = cli::parse_vector))]
-        pub location: Vector,
+    //     /// Object's location.
+    //     #[structopt(short, long, allow_hyphen_values = true, parse(try_from_str = cli::parse_vector))]
+    //     pub location: Vector,
 
-        /// When the object have to appear.
-        /// If this option have not specified, then the object will be added right now.
-        #[structopt(short, long, allow_hyphen_values = true, parse(try_from_str = cli::parse_time))]
-        pub time: Option<chrono::Duration>,
+    //     /// When the object have to appear.
+    //     /// If this option have not specified, then the object will be added right now.
+    //     #[structopt(short, long, allow_hyphen_values = true, parse(try_from_str = cli::parse_time))]
+    //     pub time: Option<chrono::Duration>,
 
-        /// Object's color.
-        #[structopt(short, long, parse(try_from_str = cli::parse_color))]
-        pub color: Option<Color>,
+    //     /// Object's color.
+    //     #[structopt(short, long, parse(try_from_str = cli::parse_color))]
+    //     pub color: Option<Color>,
 
-        /// Object's radius.
-        #[structopt(short, long, default_value = "1")]
-        pub radius: Distance,
+    //     /// Object's radius.
+    //     #[structopt(short, long, default_value = "1")]
+    //     pub radius: Distance,
 
-        /// Object's mass.
-        #[structopt(short, long, default_value = "1")]
-        pub mass: Mass,
+    //     /// Object's mass.
+    //     #[structopt(short, long, default_value = "1")]
+    //     pub mass: Mass,
 
-        /// Compute step
-        #[structopt(short, long, default_value = "1s", parse(try_from_str = cli::parse_time))]
-        pub step: chrono::Duration,
+    //     /// Compute step
+    //     #[structopt(short, long, default_value = "1s", parse(try_from_str = cli::parse_time))]
+    //     pub step: chrono::Duration,
 
-        /// Buffered track size
-        #[structopt(long, default_value = "64")]
-        pub track_size: usize,
-    }
+    //     /// Buffered track size
+    //     #[structopt(long, default_value = "64")]
+    //     pub track_size: usize,
+    // }
 
     #[cli(name = "rename-obj", about = "rename object on the scene")]
     message RenameObject {
@@ -211,27 +230,12 @@ messages! {
         pub new_name: ObjectName
     }
 
-    #[cli(name = "add-attr", about = "add new attractor to the scene")]
-    message AddAttractor {
-        /// Attractor's name
+    #[cli(name = "list-objects", about = "list all objects in the current layer")]
+    message ListObjects {
+        /// List objects in the entire session
         #[structopt(short, long)]
-        pub name: Option<AttractorName>,
-
-        /// Attractor's location
-        #[structopt(short, long, allow_hyphen_values = true, parse(try_from_str = cli::parse_vector))]
-        pub location: Vector,
-
-        /// Attractor's mass
-        #[structopt(short, long, default_value = "1")]
-        pub mass: Mass,
-
-        /// Attractor's gravity coefficient
-        #[structopt(short, long, default_value = "1")]
-        pub gravity_coeff: GravityCoeff,
+        pub all: bool
     }
-
-    #[cli(name = "list-objects", about = "list all objects in the current session")]
-    message ListObjects {}
 
     #[cli(name = "names", about = "enable/disable scene's actors' names")]
     message Names {
@@ -249,5 +253,9 @@ messages! {
         /// Set track step
         #[structopt(long, parse(try_from_str = cli::parse_time))]
         pub step: Option<chrono::Duration>
+    }
+
+    submessages {
+        Layer(layer::Message)
     }
 }

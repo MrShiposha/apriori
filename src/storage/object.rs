@@ -1,8 +1,7 @@
 use crate::{
     graphics,
-    scene::Object4d,
     r#type::{SessionId, ObjectId},
-    storage_map_err, 
+    storage_map_err,
     query,
     Result,
 };
@@ -70,7 +69,7 @@ impl<'storage> Object<'storage> {
                     FROM {schema_name}.object
                     WHERE session_fk_id = $1
                     ORDER BY object_name
-                "}, 
+                "},
                 &[&session_id]
             ).map_err(storage_map_err![Error::Storage::ObjectList])?;
 

@@ -20,10 +20,10 @@ pub type GravityCoeff = f32;
 
 pub type SessionName = String;
 pub type SessionId = i32;
+pub type LayerName = String;
+pub type LayerId = i32;
 pub type ObjectName = String;
 pub type ObjectId = i64;
-pub type AttractorName = String;
-pub type AttractorId = i64;
 
 const DAYS_IN_WEEK: RawTime = 7;
 const HOURS_IN_DAY: RawTime = 24;
@@ -56,6 +56,26 @@ pub trait AsAbsoluteTime {
 impl AsAbsoluteTime for RelativeTime {
     fn as_absolute_time(&self) -> chrono::Duration {
         chrono::Duration::milliseconds((*self * 1000.0) as RawTime)
+    }
+}
+
+pub trait IntoStorageDuration {
+    fn into_storage_duration(&self) -> RawTime;
+}
+
+impl IntoStorageDuration for chrono::Duration {
+    fn into_storage_duration(&self) -> RawTime {
+        self.num_milliseconds()
+    }
+}
+
+pub trait IntoRustDuration {
+    fn into_rust_duration(&self) -> chrono::Duration;
+}
+
+impl IntoRustDuration for RawTime {
+    fn into_rust_duration(&self) -> chrono::Duration {
+        chrono::Duration::milliseconds(*self)
     }
 }
 

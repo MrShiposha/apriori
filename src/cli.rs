@@ -1,10 +1,11 @@
 use super::{
-    app::{self, APP_CLI_PROMPT},
+    app::{self, APP_NAME},
     make_error,
     message::{self, Message},
     r#type::{Color, ColorChannel, Coord, RawTime, TimeUnit, Vector},
     shared_access, Error, Result, Shared,
 };
+use lazy_static::lazy_static;
 use css_color_parser::Color as CssColor;
 use rustyline::{
     completion::Completer,
@@ -18,6 +19,10 @@ use rustyline::{
 use std::{path::PathBuf, str::FromStr, sync::mpsc, thread};
 
 const LOG_TARGET: &'static str = "CLI";
+
+lazy_static! {
+    pub static ref APP_CLI_PROMPT: String = format!("{}> ", APP_NAME);
+}
 
 type Editor = rustyline::Editor<Helper>;
 
@@ -237,7 +242,7 @@ fn message_loop(app_state: Shared<app::State>, mut editor: Editor, sender: mpsc:
     while !is_completed && !shared_access![app_state].is_off() {
         match read_message(&mut editor) {
             Ok(message) => {
-                is_completed = matches![message, Message::Shutdown(_)];
+                is_completed = matches![message, Message::Shutdown(_) | Message::ShutdownShort(_)];
                 if let Err(err) = sender.send(message) {
                     log::error! {
                         target: LOG_TARGET,
