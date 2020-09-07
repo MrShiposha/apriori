@@ -14,7 +14,7 @@ use {
         }
     },
     lazy_static::lazy_static,
-    log::{trace, error},
+    log::{trace, warn, error},
     ptree::{item::StringItem, TreeBuilder},
 };
 
@@ -158,7 +158,13 @@ impl Engine {
     pub fn remove_layer(&mut self, layer_name: LayerName) -> Result<()> {
         transaction! {
             self.storage_mgr => t {
-                t.layer().remove_layer(self.session_id, layer_name)?;
+                let mut layer = t.layer();
+
+                if layer.is_layer_exists(self.session_id, &layer_name)? {
+                    layer.remove_layer(self.session_id, layer_name)?;
+                } else {
+                    warn!("the layer \"{}\" is not found", layer_name);
+                }
             }
         }
 
