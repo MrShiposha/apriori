@@ -1,20 +1,13 @@
 use {
     crate::{
-        Result,
-        transaction,
-        storage::{self, StorageManager, StorageTransaction},
         layer::Layer,
-        r#type::{
-            RawTime,
-            SessionId,
-            SessionName,
-            LayerId,
-            LayerName,
-            TimeFormat,
-        }
+        r#type::{LayerId, LayerName, RawTime, SessionId, SessionInfo, SessionName, TimeFormat},
+        storage::{self, StorageManager, StorageTransaction},
+        transaction, Result,
     },
     lazy_static::lazy_static,
-    log::{trace, warn, error},
+    log::{error, trace, warn},
+    postgres::Transaction,
     ptree::{item::StringItem, TreeBuilder},
 };
 
@@ -42,10 +35,7 @@ pub struct Engine {
 
 impl Engine {
     pub fn init() -> Result<Self> {
-        let storage_mgr = StorageManager::setup(
-            CONNECTION_STRING,
-            *SESSION_MAX_HANG_TIME
-        )?;
+        let storage_mgr = StorageManager::setup(CONNECTION_STRING, *SESSION_MAX_HANG_TIME)?;
 
         let session_id = 0;
         let active_layer_id = 0;
@@ -87,16 +77,16 @@ impl Engine {
         self.frames_sum_time_ms += (frame_delta_ns / ns_per_ms) as usize;
         self.frame_count += 1;
 
-        self.update_session_access_time().unwrap_or_else(|err| error! {
-            target: LOG_TARGET,
-            "unable to update the session access time: {}",
-            err
+        self.update_session_access_time().unwrap_or_else(|err| {
+            error! {
+                target: LOG_TARGET,
+                "unable to update the session access time: {}",
+                err
+            }
         });
     }
 
-    pub fn compute_locations(&mut self) {
-
-    }
+    pub fn compute_locations(&mut self) {}
 
     pub fn virtual_time(&self) -> chrono::Duration {
         self.virtual_time
@@ -192,7 +182,11 @@ impl Engine {
         Ok(())
     }
 
-    pub fn rename_layer(&mut self, old_layer_name: &LayerName, new_layer_name: &LayerName) -> Result<()> {
+    pub fn rename_layer(
+        &mut self,
+        old_layer_name: &LayerName,
+        new_layer_name: &LayerName,
+    ) -> Result<()> {
         transaction! {
             self.storage_mgr => t {
                 let mut layer = t.layer();
@@ -270,20 +264,21 @@ impl Engine {
         layer_api: &mut storage::Layer,
         builder: &mut TreeBuilder,
         current_layer_id: LayerId,
-        parent_layer_id: LayerId
+        parent_layer_id: LayerId,
     ) -> Result<()> {
         let start_time = layer_api.get_start_time(parent_layer_id)?;
 
         let layer_name = layer_api.get_name(parent_layer_id)?;
-        let layer_status = if parent_layer_id == self.active_layer_id && parent_layer_id == current_layer_id {
-            "[active/current] "
-        } else if parent_layer_id == self.active_layer_id {
-            "[active] "
-        } else if parent_layer_id == current_layer_id {
-            "[current] "
-        } else {
-            ""
-        };
+        let layer_status =
+            if parent_layer_id == self.active_layer_id && parent_layer_id == current_layer_id {
+                "[active/current] "
+            } else if parent_layer_id == self.active_layer_id {
+                "[active] "
+            } else if parent_layer_id == current_layer_id {
+                "[current] "
+            } else {
+                ""
+            };
 
         let layer_info = format!(
             "{}{}: {}",
@@ -300,12 +295,7 @@ impl Engine {
             builder.begin_child(layer_info);
 
             for &child_id in children.iter() {
-                self.get_session_layers_helper(
-                    layer_api,
-                    builder,
-                    current_layer_id,
-                    child_id
-                )?;
+                self.get_session_layers_helper(layer_api, builder, current_layer_id, child_id)?;
             }
 
             builder.end_child();
@@ -322,7 +312,7 @@ impl Engine {
                 if self.active_layer_id != layer_id {
                     self.active_layer_id = layer_id;
 
-                    self.request_simulation_info()?;
+                    self.request_simulation_info(&mut t)?;
                 }
             }
         }
@@ -330,12 +320,84 @@ impl Engine {
         Ok(())
     }
 
-    // pub fn new_se
+    pub fn get_session_name(&mut self) -> Result<SessionName> {
+        let result;
+        transaction! {
+            self.storage_mgr => t {
+                result = t.session().get_name(self.session_id);
+            }
+        }
+
+        result
+    }
+
+    pub fn get_sessions_info(&mut self) -> Result<Vec<SessionInfo>> {
+        let result;
+        transaction! {
+            self.storage_mgr => t {
+                result = t.session().get_list();
+            }
+        }
+
+        result
+    }
+
+    pub fn new_session(&mut self, session_name: Option<SessionName>) -> Result<()> {
+        self.new_session_helper(session_name, Some(self.session_id))
+    }
+
+    pub fn save_session(&mut self, session_name: SessionName) -> Result<()> {
+        transaction! {
+            self.storage_mgr => t {
+                t.session().save(self.session_id, &session_name)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn load_session(&mut self, session_name: SessionName) -> Result<()> {
+        transaction! {
+            self.storage_mgr => t {
+                let mut session = t.session();
+                let (new_session_id, new_layer_id) = session.load(&session_name)?;
+                self.set_new_session(&mut session, new_session_id, new_layer_id, Some(self.session_id))?;
+
+                self.request_simulation_info(&mut t)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn rename_session(
+        &mut self,
+        old_session_name: SessionName,
+        new_session_name: SessionName,
+    ) -> Result<()> {
+        transaction! {
+            self.storage_mgr => t {
+                t.session().rename(&old_session_name, &new_session_name)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn delete_session(&mut self, session_name: SessionName) -> Result<()> {
+        transaction! {
+            self.storage_mgr => t {
+                t.session().delete(&session_name)?;
+            }
+        }
+
+        Ok(())
+    }
 
     fn new_session_helper(
         &mut self,
         session_name: Option<SessionName>,
-        old_session_id: Option<SessionId>
+        old_session_id: Option<SessionId>,
     ) -> Result<()> {
         transaction! {
             self.storage_mgr => t {
@@ -343,14 +405,26 @@ impl Engine {
 
                 let (new_session_id, new_layer_id) = session.new(session_name)?;
 
-                if let Some(old_session_id) = old_session_id {
-                    session.unlock(old_session_id)?;
-                }
-
-                self.session_id = new_session_id;
-                self.active_layer_id = new_layer_id;
+                self.set_new_session(&mut session, new_session_id, new_layer_id, old_session_id)?;
             }
         }
+
+        Ok(())
+    }
+
+    fn set_new_session(
+        &mut self,
+        session: &mut storage::Session,
+        new_session_id: SessionId,
+        new_layer_id: LayerId,
+        old_session_id: Option<SessionId>,
+    ) -> Result<()> {
+        if let Some(old_session_id) = old_session_id {
+            session.unlock(old_session_id)?;
+        }
+
+        self.session_id = new_session_id;
+        self.active_layer_id = new_layer_id;
 
         Ok(())
     }
@@ -377,7 +451,7 @@ impl Engine {
         Ok(())
     }
 
-    fn request_simulation_info(&mut self) -> Result<()> {
+    fn request_simulation_info(&mut self, transaction: &mut Transaction) -> Result<()> {
         // TODO load from DB
         Ok(())
     }
@@ -385,14 +459,19 @@ impl Engine {
 
 impl Drop for Engine {
     fn drop(&mut self) {
-        let mut pooled_connection = self.storage_mgr.pool.get()
+        let mut pooled_connection = self
+            .storage_mgr
+            .pool
+            .get()
             .expect("the pooled connection is expected to be established");
-        let mut transaction = pooled_connection.transaction()
+        let mut transaction = pooled_connection
+            .transaction()
             .expect("the transaction is expected to be started");
 
         let mut session = storage::Session::new_api(&mut transaction);
 
-        session.unlock(self.session_id)
+        session
+            .unlock(self.session_id)
             .expect("the session is expected to be unlocked");
 
         transaction.commit().unwrap();

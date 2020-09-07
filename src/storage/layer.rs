@@ -1,5 +1,8 @@
-use crate::{make_error, r#type::{SessionId, LayerId, LayerName, IntoStorageDuration, RawTime, IntoRustDuration},
-storage_map_err, query, Result};
+use crate::{
+    make_error, query,
+    r#type::{IntoRustDuration, IntoStorageDuration, LayerId, LayerName, RawTime, SessionId},
+    storage_map_err, Result,
+};
 use postgres::Transaction;
 
 pub struct Layer<'t, 'storage> {
@@ -8,17 +11,12 @@ pub struct Layer<'t, 'storage> {
 
 impl<'t, 'storage> Layer<'t, 'storage> {
     pub fn new_api(transaction: &'t mut Transaction<'storage>) -> Self {
-        Self {
-            transaction
-        }
+        Self { transaction }
     }
 
     pub fn get_name(&mut self, layer_id: LayerId) -> Result<LayerName> {
         self.transaction
-            .query_one(
-                query!["SELECT {schema_name}.layer_name($1);"],
-                &[&layer_id]
-            )
+            .query_one(query!["SELECT {schema_name}.layer_name($1);"], &[&layer_id])
             .map(|row| row.get(0))
             .map_err(storage_map_err!(Error::Storage::Layer))
     }
@@ -27,7 +25,7 @@ impl<'t, 'storage> Layer<'t, 'storage> {
         self.transaction
             .query_one(
                 query!["SELECT {schema_name}.layer_start_time($1)"],
-                &[&layer_id]
+                &[&layer_id],
             )
             .map(|row| {
                 let raw_time: RawTime = row.get(0);
@@ -41,17 +39,22 @@ impl<'t, 'storage> Layer<'t, 'storage> {
         self.transaction
             .execute(
                 query!["CALL {schema_name}.rename_layer($1, $2)"],
-                &[&layer_id, &new_layer_name]
+                &[&layer_id, &new_layer_name],
             )
             .map(|_| {})
             .map_err(storage_map_err!(Error::Storage::Layer))
     }
 
-    pub fn get_layer_id(&mut self, session_id: SessionId, layer_name: &LayerName) -> Result<LayerId> {
-        let row = self.transaction
+    pub fn get_layer_id(
+        &mut self,
+        session_id: SessionId,
+        layer_name: &LayerName,
+    ) -> Result<LayerId> {
+        let row = self
+            .transaction
             .query_one(
                 query!["SELECT {schema_name}.layer_id($1, $2)"],
-                &[&session_id, layer_name]
+                &[&session_id, layer_name],
             )
             .map_err(storage_map_err!(Error::Storage::Layer))?;
 
@@ -63,27 +66,35 @@ impl<'t, 'storage> Layer<'t, 'storage> {
         self.transaction
             .query_one(
                 query!["SELECT {schema_name}.main_layer_id($1)"],
-                &[&session_id]
+                &[&session_id],
             )
             .map(|row| row.get(0))
             .map_err(storage_map_err!(Error::Storage::Layer))
     }
 
-    pub fn get_layer_children(&mut self, session_id: SessionId, layer_id: LayerId) -> Result<Vec<LayerId>> {
+    pub fn get_layer_children(
+        &mut self,
+        session_id: SessionId,
+        layer_id: LayerId,
+    ) -> Result<Vec<LayerId>> {
         self.transaction
             .query_one(
                 query!["SELECT {schema_name}.layer_children($1, $2)"],
-                &[&session_id, &layer_id]
+                &[&session_id, &layer_id],
             )
             .map(|row| row.try_get(0).unwrap_or(vec![]))
             .map_err(storage_map_err!(Error::Storage::Layer))
     }
 
-    pub fn get_current_layer_id(&mut self, active_layer_id: LayerId, vtime: chrono::Duration) -> Result<LayerId> {
+    pub fn get_current_layer_id(
+        &mut self,
+        active_layer_id: LayerId,
+        vtime: chrono::Duration,
+    ) -> Result<LayerId> {
         self.transaction
             .query_one(
                 query!["SELECT {schema_name}.current_layer_id($1, $2)"],
-                &[&active_layer_id, &vtime.into_storage_duration()]
+                &[&active_layer_id, &vtime.into_storage_duration()],
             )
             .map(|row| row.get(0))
             .map_err(storage_map_err!(Error::Storage::Layer))
@@ -94,7 +105,7 @@ impl<'t, 'storage> Layer<'t, 'storage> {
         session_id: SessionId,
         active_layer_id: LayerId,
         new_layer_name: &LayerName,
-        new_layer_start_time: chrono::Duration
+        new_layer_start_time: chrono::Duration,
     ) -> Result<LayerId> {
         self.transaction
             .query_one(
@@ -111,33 +122,27 @@ impl<'t, 'storage> Layer<'t, 'storage> {
                     &active_layer_id,
                     &new_layer_name,
                     &new_layer_start_time.into_storage_duration(),
-                ]
+                ],
             )
             .map(|row| row.get(0))
             .map_err(storage_map_err!(Error::Storage::Layer))
     }
 
     pub fn layer_ancestors(&mut self, layer_id: LayerId) -> Result<Vec<LayerId>> {
-        let rows = self.transaction
+        let rows = self
+            .transaction
             .query(
                 query!["SELECT layer_id FROM {schema_name}.layer_ancestors($1)"],
-                &[&layer_id]
+                &[&layer_id],
             )
             .map_err(storage_map_err!(Error::Storage::Layer))?;
 
-        Ok(
-            rows.into_iter()
-                .map(|row| row.get(0))
-                .collect()
-        )
+        Ok(rows.into_iter().map(|row| row.get(0)).collect())
     }
 
     pub fn remove_layer(&mut self, layer_id: LayerId) -> Result<()> {
         self.transaction
-            .execute(
-                query!["CALL {schema_name}.remove_layer($1)"],
-                &[&layer_id]
-            )
+            .execute(query!["CALL {schema_name}.remove_layer($1)"], &[&layer_id])
             .map(|_| {})
             .map_err(storage_map_err!(Error::Storage::Layer))
     }

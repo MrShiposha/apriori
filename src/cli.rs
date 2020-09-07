@@ -5,8 +5,8 @@ use super::{
     r#type::{Color, ColorChannel, Coord, RawTime, TimeUnit, Vector},
     shared_access, Error, Result, Shared,
 };
-use lazy_static::lazy_static;
 use css_color_parser::Color as CssColor;
+use lazy_static::lazy_static;
 use rustyline::{
     completion::Completer,
     config::{self, Config},

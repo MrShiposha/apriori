@@ -1,35 +1,31 @@
 use super::{
     cli,
-    make_error,
     engine::Engine,
     layer,
-    message::{self, Message},
-    r#type::{Color, RawTime, TimeFormat, TimeUnit},
-    shared_access,
-    Error, Result, Shared,
     logger::LOGGER,
+    make_error,
+    message::{self, Message},
+    r#type::{Color, RawTime, SessionInfo, TimeFormat, TimeUnit},
+    shared_access, Error, Result, Shared,
 };
 use kiss3d::{
-    camera::{
-        // Camera,
-        FirstPerson,
-    },
-    light::Light,
+    camera::FirstPerson,
     event::{Action, Key, Modifiers, WindowEvent},
+    light::Light,
     scene::SceneNode,
     text::Font,
     window::{CanvasSetup, NumSamples, Window},
 };
-use log::{info, error};
-use nalgebra::{Point2, Point3, /*Vector2*/};
+use layer::Layer;
+use log::{error, info};
+use nalgebra::{Point2, Point3 /*Vector2*/};
+use ptree;
 use std::{
     fmt::{self, Write},
     path::PathBuf,
     sync::mpsc::TryRecvError,
 };
 use structopt::StructOpt;
-use layer::Layer;
-use ptree;
 
 const LOG_TARGET: &'static str = "application";
 pub const APP_NAME: &'static str = "apriori";
@@ -169,8 +165,6 @@ impl App {
             Some(_) => self.handle_layer_msg(message),
             None => self.handle_common_msg(message, state),
         }
-
-
     }
 
     fn handle_layer_msg(&mut self, msg: Message) -> Result<()> {
@@ -186,8 +180,8 @@ impl App {
                         }
                     }
                 }
-               Ok(())
-            },
+                Ok(())
+            }
             Message::Submit(_) => self.submit_layer(),
             Message::Cancel(_) => {
                 let layer = self.new_layer.take().unwrap();
@@ -197,7 +191,7 @@ impl App {
                 Ok(())
             }
             Message::Shutdown(_) | Message::ShutdownShort(_) => self.shutdown(),
-            _ => Err(Error::UnexpectedMessage(msg))
+            _ => Err(Error::UnexpectedMessage(msg)),
         }
     }
 
@@ -205,10 +199,7 @@ impl App {
         match msg {
             Message::NewLayer(msg) => self.new_layer(msg),
             Message::RemoveLayer(msg) => self.engine.remove_layer(&msg.name),
-            Message::RenameLayer(msg) => self.engine.rename_layer(
-                &msg.old_name,
-                &msg.new_name
-            ),
+            Message::RenameLayer(msg) => self.engine.rename_layer(&msg.old_name, &msg.new_name),
             Message::GlobalHelp(_) | Message::GlobalHelpShort(_) => {
                 let max_name = Message::cli_list()
                     .iter()
@@ -272,19 +263,17 @@ impl App {
 
                 Ok(())
             }
-            Message::LogFile(msg) => {
-                match msg.path {
-                    Some(path) => shared_access![mut LOGGER].set_log_file_path(path),
-                    None => {
-                        match shared_access![LOGGER].get_log_file_path() {
-                            Some(path) => println!("{}", path.display()),
-                            None => println!("/log file path is unset/")
-                        }
-
-                        Ok(())
+            Message::LogFile(msg) => match msg.path {
+                Some(path) => shared_access![mut LOGGER].set_log_file_path(path),
+                None => {
+                    match shared_access![LOGGER].get_log_file_path() {
+                        Some(path) => println!("{}", path.display()),
+                        None => println!("/log file path is unset/"),
                     }
+
+                    Ok(())
                 }
-            }
+            },
             Message::TimeFormat(_) => {
                 println!();
                 println!("\tDigit: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9");
@@ -322,16 +311,13 @@ impl App {
             }
             Message::ListLayers(list_layers_msg) => self.list_layers(list_layers_msg),
             Message::SelectLayer(msg) => self.engine.select_layer(&msg.name),
-            // Message::ListSessions(_) => {
-            //     println!("\n\t-- sessions list --");
-            //     self.engine.print_session_list()
-            // }
-            // Message::GetSession(_) => self.engine.print_current_session_name(),
-            // Message::NewSession(msg) => self.engine.new_session(msg.name),
-            // Message::SaveSession(msg) => self.engine.save_current_session(msg.name),
-            // Message::LoadSession(msg) => self.engine.load_session(msg.name),
-            // Message::RenameSession(msg) => self.engine.rename_session(&msg.old_name, &msg.new_name),
-            // Message::DeleteSession(msg) => self.engine.delete_session(&msg.name),
+            Message::ListSessions(_) => self.print_session_list(),
+            Message::GetSession(_) => self.print_current_session_name(),
+            Message::NewSession(msg) => self.engine.new_session(msg.name),
+            Message::SaveSession(msg) => self.engine.save_session(msg.name),
+            Message::LoadSession(msg) => self.engine.load_session(msg.name),
+            Message::RenameSession(msg) => self.engine.rename_session(msg.old_name, msg.new_name),
+            Message::DeleteSession(msg) => self.engine.delete_session(msg.name),
             // Message::AddObject(msg) if state.is_run() => self.handle_add_object(msg),
             // Message::RenameObject(msg) if state.is_run() => self.handle_rename_object(msg),
             // Message::ListObjects(_) => {
@@ -351,7 +337,7 @@ impl App {
                         self.track_step = step;
                     } else {
                         return Err(Error::VirtualTime(
-                            "track step must be greater than zero".into()
+                            "track step must be greater than zero".into(),
                         ));
                     }
                 }
@@ -386,8 +372,7 @@ impl App {
     fn list_layers(&mut self, _: message::ListLayers) -> Result<()> {
         let layers_tree = self.engine.get_session_layers()?;
 
-        ptree::print_tree(&layers_tree)
-            .map_err(|err| Error::Io(err))
+        ptree::print_tree(&layers_tree).map_err(|err| Error::Io(err))
     }
 
     fn check_window_opened(&mut self) {
@@ -424,6 +409,38 @@ impl App {
         Ok(())
     }
 
+    fn print_current_session_name(&mut self) -> Result<()> {
+        let session_name = self.engine.get_session_name()?;
+
+        println!("{}", session_name);
+
+        Ok(())
+    }
+
+    fn print_session_list(&mut self) -> Result<()> {
+        let infos = self.engine.get_sessions_info()?;
+
+        println!("\n\t-- sessions list --");
+        for info in infos.iter() {
+            let SessionInfo {
+                name,
+                last_access,
+                is_locked,
+            } = info;
+
+            let locked_text = "LOCKED:";
+            println!(
+                "{is_locked:<width$} {} [last access {}]",
+                name,
+                last_access,
+                is_locked = if *is_locked { locked_text } else { "" },
+                width = locked_text.len()
+            );
+        }
+
+        Ok(())
+    }
+
     // fn handle_add_object(&mut self, msg: message::AddObject) -> Result<()> {
     //     let object_index = self.object_index;
     //     self.object_index += 1;
@@ -441,8 +458,8 @@ impl App {
     // }
 
     // fn handle_rename_object(&mut self, msg: message::RenameObject) -> Result<()> {
-        // self.scene_mgr.rename_object(&mut self.engine, msg.old_name, msg.new_name)
-        // Ok(())
+    // self.scene_mgr.rename_object(&mut self.engine, msg.old_name, msg.new_name)
+    // Ok(())
     // }
 
     fn handle_virtual_time_step(
@@ -458,11 +475,14 @@ impl App {
                     self.engine.set_virtual_step(step);
                 } else {
                     return Err(Error::VirtualTime(
-                        "setting virtual time step that lower than zero is forbidden".into()
+                        "setting virtual time step that lower than zero is forbidden".into(),
                     ));
                 }
             }
-            None => println!("{}", TimeFormat::VirtualTimeShort(self.engine.virtual_step())),
+            None => println!(
+                "{}",
+                TimeFormat::VirtualTimeShort(self.engine.virtual_step())
+            ),
             _ => {
                 return Err(Error::VirtualTime(
                     "setting virtual time step after the simulation has complete is forbidden"
@@ -483,12 +503,17 @@ impl App {
                     self.engine.set_virtual_time(time);
                 } else {
                     return Err(Error::VirtualTime(
-                        "setting virtual time that lower than zero is forbidden".into()
+                        "setting virtual time that lower than zero is forbidden".into(),
                     ));
                 }
             }
-            None if state.is_run() && msg.origin => self.engine.set_virtual_time(chrono::Duration::zero()),
-            None if !msg.origin => println!("{}", TimeFormat::VirtualTimeLong(self.engine.virtual_time())),
+            None if state.is_run() && msg.origin => {
+                self.engine.set_virtual_time(chrono::Duration::zero())
+            }
+            None if !msg.origin => println!(
+                "{}",
+                TimeFormat::VirtualTimeLong(self.engine.virtual_time())
+            ),
             _ => {
                 return Err(Error::VirtualTime(
                     "setting virtual time after the simulation has complete is forbidden".into(),
@@ -514,52 +539,52 @@ impl App {
     }
 
     // fn simulate_frame(&mut self) {
-        // self.scene_mgr.query_objects_by_time(
-        //     &mut self.engine,
-        //     &self.virtual_time,
-        //     {
-        //         let is_names_displayed = self.is_names_displayed;
-        //         let is_tracks_displayed = self.is_tracks_displayed;
-        //         let track_step = self.track_step;
+    // self.scene_mgr.query_objects_by_time(
+    //     &mut self.engine,
+    //     &self.virtual_time,
+    //     {
+    //         let is_names_displayed = self.is_names_displayed;
+    //         let is_tracks_displayed = self.is_tracks_displayed;
+    //         let track_step = self.track_step;
 
-        //         let window = &mut self.window;
-        //         let window_size = Vector2::new(window.width() as f32, window.height() as f32);
-        //         let hidpi_factor = window.hidpi_factor() as f32;
-        //         let text_size = 85.0;
-        //         let half_text_size = text_size / 2.0;
-        //         let quarter_text_size = half_text_size / 2.0;
-        //         let font = Font::default();
+    //         let window = &mut self.window;
+    //         let window_size = Vector2::new(window.width() as f32, window.height() as f32);
+    //         let hidpi_factor = window.hidpi_factor() as f32;
+    //         let text_size = 85.0;
+    //         let half_text_size = text_size / 2.0;
+    //         let quarter_text_size = half_text_size / 2.0;
+    //         let font = Font::default();
 
-        //         let camera = &mut self.camera;
+    //         let camera = &mut self.camera;
 
-        //         move |object, location| {
-        //             if is_names_displayed {
-        //                 let mut text_location = camera.project(
-        //                     &Point3::from(location),
-        //                     &window_size
-        //                 ).scale(hidpi_factor) - Vector2::new(quarter_text_size, -half_text_size);
-        //                 text_location[1] = window_size[1] * hidpi_factor - text_location[1];
+    //         move |object, location| {
+    //             if is_names_displayed {
+    //                 let mut text_location = camera.project(
+    //                     &Point3::from(location),
+    //                     &window_size
+    //                 ).scale(hidpi_factor) - Vector2::new(quarter_text_size, -half_text_size);
+    //                 text_location[1] = window_size[1] * hidpi_factor - text_location[1];
 
-        //                 window.draw_text(
-        //                     format!("+ {}", object.name()).as_ref(),
-        //                     &Point2::from(text_location),
-        //                     text_size,
-        //                     &font,
-        //                     &graphics::opposite_color(object.color())
-        //                 );
-        //             }
+    //                 window.draw_text(
+    //                     format!("+ {}", object.name()).as_ref(),
+    //                     &Point2::from(text_location),
+    //                     text_size,
+    //                     &font,
+    //                     &graphics::opposite_color(object.color())
+    //                 );
+    //             }
 
-        //             if is_tracks_displayed {
-        //                 Self::draw_track(
-        //                     window,
-        //                     &Point3::from(*object.color()),
-        //                     object.track(),
-        //                     track_step
-        //                 );
-        //             }
-        //         }
-        //     }
-        // );
+    //             if is_tracks_displayed {
+    //                 Self::draw_track(
+    //                     window,
+    //                     &Point3::from(*object.color()),
+    //                     object.track(),
+    //                     track_step
+    //                 );
+    //             }
+    //         }
+    //     }
+    // );
     // }
 
     fn handle_window_events(&mut self) {
@@ -572,7 +597,7 @@ impl App {
                             "{}", err
                         }
                     }
-                },
+                }
                 _ => {}
             }
         }
@@ -683,7 +708,12 @@ impl App {
         )
         .unwrap();
 
-        writeln!(&mut stats_text, "frame avg ms: {}", self.engine.frame_avg_time_ms()).unwrap();
+        writeln!(
+            &mut stats_text,
+            "frame avg ms: {}",
+            self.engine.frame_avg_time_ms()
+        )
+        .unwrap();
 
         self.draw_text(&stats_text, pos, Color::new(1.0, 0.0, 1.0));
     }

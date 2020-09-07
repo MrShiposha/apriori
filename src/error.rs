@@ -279,9 +279,15 @@ impl fmt::Display for Storage {
             Self::ObjectList(err) => write!(f, "unable to display object list: {}", err),
             Self::OccupiedSpacesStorageInit(err) => write!(f, "unable to init OSS: {}", err),
             Self::AddOccupiedSpace(err) => write!(f, "unable to add occupied space: {}", err),
-            Self::CheckPossibleCollisions(err) => write!(f, "unable to check possible collisions: {}", err),
-            Self::DeleteFutureOccupiedSpace(err) => write!(f, "unable to delete future occupied spaces: {}", err),
-            Self::DeletePastOccupiedSpace(err) => write!(f, "unable to delete past occupied spaces: {}", err),
+            Self::CheckPossibleCollisions(err) => {
+                write!(f, "unable to check possible collisions: {}", err)
+            }
+            Self::DeleteFutureOccupiedSpace(err) => {
+                write!(f, "unable to delete future occupied spaces: {}", err)
+            }
+            Self::DeletePastOccupiedSpace(err) => {
+                write!(f, "unable to delete past occupied spaces: {}", err)
+            }
             Self::ReadOccupiedSpace(err) => write!(f, "unable to read occupied space: {}", err),
             Self::Layer(err) => write!(f, "layer error: {}", err),
         }
@@ -306,10 +312,8 @@ impl fmt::Display for Scene {
             ),
             Self::ObjectAlreadyExists(obj_name) => {
                 write!(f, "`{}`: object already exists", obj_name)
-            },
-            Self::ObjectNotFound(obj_name) => {
-                write!(f, "`{}`: object not found", obj_name)
-            },
+            }
+            Self::ObjectNotFound(obj_name) => write!(f, "`{}`: object not found", obj_name),
         }
     }
 }

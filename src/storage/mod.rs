@@ -1,6 +1,4 @@
 use {
-    postgres::Transaction,
-    r2d2_postgres::PostgresConnectionManager,
     crate::{
         make_error,
         Result,
@@ -11,16 +9,18 @@ use {
         //     RelativeTime,
         //     Vector,
         // }
-    }
+    },
+    postgres::Transaction,
+    r2d2_postgres::PostgresConnectionManager,
 };
 
-pub mod session;
 pub mod layer;
+pub mod session;
 // pub mod object;
 
 // pub use object::Object;
-pub use session::Session;
 pub use layer::Layer;
+pub use session::Session;
 
 const LOG_TARGET: &'static str = "storage";
 
@@ -59,15 +59,12 @@ macro_rules! transaction {
 
 #[derive(Clone)]
 pub struct StorageManager {
-    pub(in crate) pool: r2d2::Pool<PostgresConnectionManager<postgres::NoTls>>
+    pub(in crate) pool: r2d2::Pool<PostgresConnectionManager<postgres::NoTls>>,
 }
 
 impl StorageManager {
     pub fn setup(connection_string: &str, session_max_hang_time: chrono::Duration) -> Result<Self> {
-        let mgr = PostgresConnectionManager::new(
-            connection_string.parse()?,
-            postgres::NoTls
-        );
+        let mgr = PostgresConnectionManager::new(connection_string.parse()?, postgres::NoTls);
 
         let pool = r2d2::Pool::new(mgr)?;
         {
@@ -75,14 +72,15 @@ impl StorageManager {
             Self::setup_schema(&mut client, session_max_hang_time)?;
         }
 
-        let storage_mgr = Self {
-            pool
-        };
+        let storage_mgr = Self { pool };
 
         Ok(storage_mgr)
     }
 
-    fn setup_schema(psql: &mut postgres::Client, session_max_hang_time: chrono::Duration) -> Result<()> {
+    fn setup_schema(
+        psql: &mut postgres::Client,
+        session_max_hang_time: chrono::Duration,
+    ) -> Result<()> {
         let setup_query = format! {
             r#"
                 {schema}

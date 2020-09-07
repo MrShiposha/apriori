@@ -79,6 +79,12 @@ impl IntoRustDuration for RawTime {
     }
 }
 
+pub struct SessionInfo {
+    pub name: SessionName,
+    pub last_access: chrono::DateTime<chrono::Local>,
+    pub is_locked: bool,
+}
+
 pub enum TimeFormat {
     VirtualTimeLong(chrono::Duration),
     VirtualTimeShort(chrono::Duration),

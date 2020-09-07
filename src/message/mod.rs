@@ -1,15 +1,10 @@
 use {
-    std::path::PathBuf,
-    log::LevelFilter,
     super::{
         cli,
-        r#type::{
-            self,
-            SessionName,
-            LayerName,
-            ObjectName,
-        },
-    }
+        r#type::{self, LayerName, ObjectName, SessionName},
+    },
+    log::LevelFilter,
+    std::path::PathBuf,
 };
 
 #[macro_use]

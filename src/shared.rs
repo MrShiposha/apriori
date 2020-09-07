@@ -1,7 +1,7 @@
 use std::{
     fmt,
     hash::{Hash, Hasher},
-    sync::{Arc, Weak, LockResult, RwLock, RwLockReadGuard, RwLockWriteGuard},
+    sync::{Arc, LockResult, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak},
 };
 
 const LOG_TARGET: &'static str = "shared";

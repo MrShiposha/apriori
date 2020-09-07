@@ -1,38 +1,29 @@
 use {
+    crate::{make_error, shared::Shared, Result},
+    lazy_static::lazy_static,
+    log::{
+        max_level, set_logger, set_max_level, LevelFilter, Log, Metadata, Record, SetLoggerError,
+    },
+    regex::Regex,
     std::{
-        path::{
-            Path,
-            PathBuf,
-        },
+        borrow::Borrow,
+        cmp::{Eq, PartialEq},
+        collections::hash_set::HashSet,
         fs::File,
+        hash::{Hash, Hasher},
         io::prelude::*,
         ops::Deref,
-        cmp::{PartialEq, Eq},
-        borrow::Borrow,
-        hash::{Hash, Hasher},
-        collections::hash_set::HashSet,
+        path::{Path, PathBuf},
     },
-    log::{set_logger, set_max_level, max_level, LevelFilter, Log, Metadata, Record, SetLoggerError},
-    lazy_static::lazy_static,
-    regex::Regex,
-    crate::{
-        make_error,
-        Result,
-        shared::Shared,
-    }
 };
 
 lazy_static! {
     pub static ref LOGGER: Shared<Logger> = Shared::from(Logger::new());
-    
     static ref DEPS_TARGETS: RegexWrapper = {
-        let targets = [
-            "rustyline",
-            "mio*",
-            "tokio*"
-        ];
+        let targets = ["rustyline", "mio*", "tokio*"];
 
-        let regex = targets.iter()
+        let regex = targets
+            .iter()
             .map(|target| format!("({})", target))
             .collect::<Vec<_>>()
             .join("|");
@@ -145,11 +136,12 @@ impl Log for Shared<Logger> {
 
             if logger.log_file.is_some() {
                 std::mem::drop(logger);
-                
+
                 let mut logger = self.write().expect("unable to access the logger");
                 let log_file = logger.log_file.as_mut().unwrap();
 
-                log_file.write_all(log_msg.as_bytes())
+                log_file
+                    .write_all(log_msg.as_bytes())
                     .expect("unable to write to the log file");
             }
         }

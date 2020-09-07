@@ -7,9 +7,7 @@ pub struct Layer {
 
 impl Layer {
     pub fn new(name: LayerName) -> Self {
-        Self {
-            name
-        }
+        Self { name }
     }
 
     pub fn name(&self) -> &LayerName {

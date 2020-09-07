@@ -1,10 +1,6 @@
 use {
+    super::r#type::{Distance, RelativeTime, Vector},
     std::ops::Range,
-    super::r#type::{
-        Vector,
-        RelativeTime,
-        Distance,
-    }
 };
 
 pub fn hermite_interpolation(
@@ -14,7 +10,7 @@ pub fn hermite_interpolation(
     location_1: &Vector,
     velocity_1: &Vector,
     time_1: RelativeTime,
-    interest_time: RelativeTime
+    interest_time: RelativeTime,
 ) -> Vector {
     let step = time_1 - time_0;
     let t = (interest_time - time_0) / step;
@@ -37,11 +33,11 @@ pub fn hermite_interpolation(
 pub fn ranged_secant(
     valid_range: Range<RelativeTime>,
     eps: f32,
-    f: impl Fn(RelativeTime) -> Distance
+    f: impl Fn(RelativeTime) -> Distance,
 ) -> Option<RelativeTime> {
     let mut min = valid_range.start;
     let mut max = valid_range.end;
-    
+
     let mut diff = max - min;
     let mut f_min = f(min);
     let mut f_max = f(max);
