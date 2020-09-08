@@ -40,8 +40,6 @@ pub enum Error {
     Storage(Storage),
     SerializeCSV(csv::Error),
     WriterCSV(String),
-    // Scene(Scene),
-    Physics(Physics),
 }
 
 #[derive(Debug)]
@@ -65,39 +63,12 @@ pub enum Parse {
 #[derive(Debug)]
 pub enum Storage {
     Raw(postgres::Error),
-    OccupiedSpacesRaw(rusqlite::Error),
     SetupSchema(postgres::Error),
     Transaction(postgres::Error),
-    SessionCreate(postgres::Error),
-    SessionUpdateAccessTime(postgres::Error),
-    SessionSave(postgres::Error),
-    SessionLoad(postgres::Error),
-    SessionRename(postgres::Error),
-    SessionUnlock(postgres::Error),
-    SessionList(postgres::Error),
-    SessionGet(postgres::Error),
-    SessionDelete(postgres::Error),
+    Session(postgres::Error),
     Layer(postgres::Error),
     Object(postgres::Error),
     Location(postgres::Error),
-    OccupiedSpacesStorageInit(rusqlite::Error),
-    AddOccupiedSpace(rusqlite::Error),
-    CheckPossibleCollisions(rusqlite::Error),
-    DeleteFutureOccupiedSpace(rusqlite::Error),
-    DeletePastOccupiedSpace(rusqlite::Error),
-    ReadOccupiedSpace(rusqlite::Error),
-}
-
-// #[derive(Debug)]
-// pub enum Scene {
-//     UncomputedTrackPart(chrono::Duration, Range<chrono::Duration>),
-//     ObjectAlreadyExists(ObjectName),
-//     ObjectNotFound(ObjectName),
-// }
-
-#[derive(Debug)]
-pub enum Physics {
-    Init(rusqlite::Error),
 }
 
 impl From<std::io::Error> for Error {
@@ -176,8 +147,6 @@ impl fmt::Display for Error {
             Error::Storage(err) => write!(f, "[storage] {}", err),
             Error::SerializeCSV(err) => write!(f, "[serialization csv] {}", err),
             Error::WriterCSV(err) => write!(f, "[write csv] {}", err),
-            // Error::Scene(err) => write!(f, "[scene] {}", err),
-            Error::Physics(err) => write!(f, "[physics] {}", err),
         }
     }
 }
@@ -246,20 +215,8 @@ impl From<postgres::Error> for Storage {
     }
 }
 
-impl From<rusqlite::Error> for Storage {
-    fn from(err: rusqlite::Error) -> Self {
-        Self::OccupiedSpacesRaw(err)
-    }
-}
-
 impl From<postgres::Error> for Error {
     fn from(err: postgres::Error) -> Self {
-        Self::Storage(err.into())
-    }
-}
-
-impl From<rusqlite::Error> for Error {
-    fn from(err: rusqlite::Error) -> Self {
         Self::Storage(err.into())
     }
 }
@@ -268,73 +225,12 @@ impl fmt::Display for Storage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Raw(err) => write!(f, "[storage] {}", err),
-            Self::OccupiedSpacesRaw(err) => write!(f, "[oss] {}", err),
             Self::SetupSchema(err) => write!(f, "unable to setup schema: {}", err),
             Self::Transaction(err) => write!(f, "unable to start the transaction: {}", err),
-            Self::SessionCreate(err) => write!(f, "unable to create new session: {}", err),
-            Self::SessionUpdateAccessTime(err) => {
-                write!(f, "unable to update session access time: {}", err)
-            }
-            Self::SessionSave(err) => write!(f, "unable to save the session: {}", err),
-            Self::SessionLoad(err) => write!(f, "unable to load the session: {}", err),
-            Self::SessionRename(err) => write!(f, "unable to find the session: {}", err),
-            Self::SessionUnlock(err) => write!(f, "unable to unlock the session: {}", err),
-            Self::SessionList(err) => write!(f, "unable to display session list: {}", err),
-            Self::SessionGet(err) => write!(f, "unable to display current session: {}", err),
-            Self::SessionDelete(err) => write!(f, "unable to delete the session: {}", err),
-            Self::Object(err) => write!(f, "object error: {}", err),
-            Self::OccupiedSpacesStorageInit(err) => write!(f, "unable to init OSS: {}", err),
-            Self::AddOccupiedSpace(err) => write!(f, "unable to add occupied space: {}", err),
-            Self::CheckPossibleCollisions(err) => {
-                write!(f, "unable to check possible collisions: {}", err)
-            }
-            Self::DeleteFutureOccupiedSpace(err) => {
-                write!(f, "unable to delete future occupied spaces: {}", err)
-            }
-            Self::DeletePastOccupiedSpace(err) => {
-                write!(f, "unable to delete past occupied spaces: {}", err)
-            }
-            Self::ReadOccupiedSpace(err) => write!(f, "unable to read occupied space: {}", err),
+            Self::Session(err) => write!(f, "session error: {}", err),
             Self::Layer(err) => write!(f, "layer error: {}", err),
+            Self::Object(err) => write!(f, "object error: {}", err),
             Self::Location(err) => write!(f, "location error: {}", err),
-        }
-    }
-}
-
-// impl From<Scene> for Error {
-//     fn from(err: Scene) -> Self {
-//         Self::Scene(err)
-//     }
-// }
-
-// impl fmt::Display for Scene {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         match self {
-//             Self::UncomputedTrackPart(when, computed_range) => write!(
-//                 f,
-//                 "`{}`: is not in computed part ({} -> {})",
-//                 TimeFormat::VirtualTimeShort(*when),
-//                 TimeFormat::VirtualTimeShort(computed_range.start),
-//                 TimeFormat::VirtualTimeShort(computed_range.end),
-//             ),
-//             Self::ObjectAlreadyExists(obj_name) => {
-//                 write!(f, "`{}`: object already exists", obj_name)
-//             }
-//             Self::ObjectNotFound(obj_name) => write!(f, "`{}`: object not found", obj_name),
-//         }
-//     }
-// }
-
-impl From<Physics> for Error {
-    fn from(err: Physics) -> Self {
-        Self::Physics(err)
-    }
-}
-
-impl fmt::Display for Physics {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Init(err) => write!(f, "unable to init physics: {}", err),
         }
     }
 }

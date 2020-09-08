@@ -21,7 +21,7 @@ impl<'t, 'storage> Session<'t, 'storage> {
                 query!["SELECT {schema_name}.create_new_session($1)"],
                 &[&name],
             )
-            .map_err(map_err!(Error::Storage::SessionCreate))?;
+            .map_err(map_err!(Error::Storage::Session))?;
 
         let session_id: SessionId = row.get(0);
         let row = self
@@ -30,7 +30,7 @@ impl<'t, 'storage> Session<'t, 'storage> {
                 query!("SELECT {schema_name}.main_layer_id($1)"),
                 &[&session_id],
             )
-            .map_err(map_err!(Error::Storage::SessionCreate))?;
+            .map_err(map_err!(Error::Storage::Session))?;
 
         let layer_id = row.get(0);
 
@@ -43,7 +43,7 @@ impl<'t, 'storage> Session<'t, 'storage> {
                 query!["CALL {schema_name}.update_session_access_time($1)"],
                 &[&id],
             )
-            .map_err(map_err![Error::Storage::SessionUpdateAccessTime])?;
+            .map_err(map_err![Error::Storage::Session])?;
 
         Ok(())
     }
@@ -52,7 +52,7 @@ impl<'t, 'storage> Session<'t, 'storage> {
         self.transaction
             .execute(query!["CALL {schema_name}.unlock_session($1)"], &[&id])
             .map(|_| {})
-            .map_err(map_err![Error::Storage::SessionUnlock])
+            .map_err(map_err![Error::Storage::Session])
     }
 
     pub fn save(&mut self, id: SessionId, name: &str) -> Result<()> {
@@ -62,14 +62,14 @@ impl<'t, 'storage> Session<'t, 'storage> {
                 &[&id, &name],
             )
             .map(|_| {})
-            .map_err(map_err!(Error::Storage::SessionSave))
+            .map_err(map_err!(Error::Storage::Session))
     }
 
     pub fn load(&mut self, name: &str) -> Result<(SessionId, LayerId)> {
         let row = self
             .transaction
             .query_one(query!["SELECT {schema_name}.load_session($1)"], &[&name])
-            .map_err(map_err![Error::Storage::SessionLoad])?;
+            .map_err(map_err![Error::Storage::Session])?;
 
         let session_id: SessionId = row.get(0);
 
@@ -79,7 +79,7 @@ impl<'t, 'storage> Session<'t, 'storage> {
                 query!("SELECT {schema_name}.main_layer_id($1)"),
                 &[&session_id],
             )
-            .map_err(map_err!(Error::Storage::SessionCreate))?;
+            .map_err(map_err!(Error::Storage::Session))?;
 
         let layer_id: LayerId = row.get(0);
 
@@ -93,7 +93,7 @@ impl<'t, 'storage> Session<'t, 'storage> {
                 &[&old_name, &new_name],
             )
             .map(|_| {})
-            .map_err(map_err!(Error::Storage::SessionRename))
+            .map_err(map_err!(Error::Storage::Session))
     }
 
     pub fn get_list(&mut self) -> Result<Vec<SessionInfo>> {
@@ -108,7 +108,7 @@ impl<'t, 'storage> Session<'t, 'storage> {
                 "},
                 &[],
             )
-            .map_err(map_err![Error::Storage::SessionList])?;
+            .map_err(map_err![Error::Storage::Session])?;
 
         let infos = row
             .into_iter()
@@ -129,13 +129,13 @@ impl<'t, 'storage> Session<'t, 'storage> {
                 let name: Option<_> = row.get(0);
                 name.unwrap_or("/unnamed/".into())
             })
-            .map_err(map_err![Error::Storage::SessionGet])
+            .map_err(map_err![Error::Storage::Session])
     }
 
     pub fn delete(&mut self, name: &str) -> Result<()> {
         self.transaction
             .execute(query!["CALL {schema_name}.delete_session($1)"], &[&name])
             .map(|_| {})
-            .map_err(map_err![Error::Storage::SessionDelete])
+            .map_err(map_err![Error::Storage::Session])
     }
 }
