@@ -16,7 +16,6 @@ pub type RawTime = i64;
 
 /// Time relative to one second
 pub type RelativeTime = f32;
-pub type GravityCoeff = f32;
 
 pub type SessionName = String;
 pub type SessionId = i32;
@@ -30,12 +29,6 @@ const HOURS_IN_DAY: RawTime = 24;
 const MINS_IN_HOUR: RawTime = 60;
 const SECS_IN_MIN: RawTime = 60;
 const MILLIS_IN_SEC: RawTime = 1000;
-
-#[derive(Debug, Clone, Copy)]
-pub enum TimeDirection {
-    Forward,
-    Backward,
-}
 
 pub trait AsRelativeTime {
     fn as_relative_time(&self) -> RelativeTime;

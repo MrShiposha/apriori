@@ -49,6 +49,21 @@ AS $$
     END
 $$ LANGUAGE plpgsql;
 
+-- CREATE OR REPLACE FUNCTION {schema_name}.layer_object_ids(
+--     layer_id integer
+-- ) RETURNS integer[]
+-- AS $$
+--     BEGIN
+--         RETURN (
+--                 SELECT
+--                     array_agg(object_id::integer ORDER BY object_id)
+--                 FROM {schema_name}.object
+--                 WHERE
+--                     layer_fk_id = layer_id
+--         );
+--     END
+-- $$ LANGUAGE plpgsql;
+
 CREATE OR REPLACE FUNCTION {schema_name}.add_layer(
     session_id integer,
     active_layer_id integer,

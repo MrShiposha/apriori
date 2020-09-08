@@ -1,9 +1,8 @@
 use super::{
     message,
-    r#type::{LayerName, ObjectName, TimeFormat},
+    r#type::{LayerName, ObjectName},
 };
 use std::fmt;
-use std::ops::Range;
 
 pub type Description = String;
 
@@ -39,7 +38,9 @@ pub enum Error {
     CliRead(rustyline::error::ReadlineError),
     VirtualTime(Description),
     Storage(Storage),
-    Scene(Scene),
+    SerializeCSV(csv::Error),
+    WriterCSV(String),
+    // Scene(Scene),
     Physics(Physics),
 }
 
@@ -47,6 +48,9 @@ pub enum Error {
 pub enum Layer {
     LayerAlreadyExists(LayerName),
     LayerNotFound(LayerName),
+    ObjectNotFound(ObjectName),
+    ObjectAlreadyAdded(ObjectName),
+    ObjectAlreadyExists(ObjectName),
 }
 
 #[derive(Debug)]
@@ -60,7 +64,7 @@ pub enum Parse {
 
 #[derive(Debug)]
 pub enum Storage {
-    MasterStorageRaw(postgres::Error),
+    Raw(postgres::Error),
     OccupiedSpacesRaw(rusqlite::Error),
     SetupSchema(postgres::Error),
     Transaction(postgres::Error),
@@ -74,9 +78,8 @@ pub enum Storage {
     SessionGet(postgres::Error),
     SessionDelete(postgres::Error),
     Layer(postgres::Error),
-    AddObject(postgres::Error),
-    RenameObject(postgres::Error),
-    ObjectList(postgres::Error),
+    Object(postgres::Error),
+    Location(postgres::Error),
     OccupiedSpacesStorageInit(rusqlite::Error),
     AddOccupiedSpace(rusqlite::Error),
     CheckPossibleCollisions(rusqlite::Error),
@@ -85,12 +88,12 @@ pub enum Storage {
     ReadOccupiedSpace(rusqlite::Error),
 }
 
-#[derive(Debug)]
-pub enum Scene {
-    UncomputedTrackPart(chrono::Duration, Range<chrono::Duration>),
-    ObjectAlreadyExists(ObjectName),
-    ObjectNotFound(ObjectName),
-}
+// #[derive(Debug)]
+// pub enum Scene {
+//     UncomputedTrackPart(chrono::Duration, Range<chrono::Duration>),
+//     ObjectAlreadyExists(ObjectName),
+//     ObjectNotFound(ObjectName),
+// }
 
 #[derive(Debug)]
 pub enum Physics {
@@ -171,7 +174,9 @@ impl fmt::Display for Error {
             Error::CliRead(err) => write!(f, "[cli] {}", err),
             Error::VirtualTime(desc) => write!(f, "[virtual time] {}", desc),
             Error::Storage(err) => write!(f, "[storage] {}", err),
-            Error::Scene(err) => write!(f, "[scene] {}", err),
+            Error::SerializeCSV(err) => write!(f, "[serialization csv] {}", err),
+            Error::WriterCSV(err) => write!(f, "[write csv] {}", err),
+            // Error::Scene(err) => write!(f, "[scene] {}", err),
             Error::Physics(err) => write!(f, "[physics] {}", err),
         }
     }
@@ -211,7 +216,10 @@ impl fmt::Display for Layer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::LayerAlreadyExists(name) => write!(f, "layer \"{}\" already exists", name),
+            Self::ObjectNotFound(name) => write!(f, "object \"{}\" is not found in the layer", name),
             Self::LayerNotFound(name) => write!(f, "layer \"{}\" is not found", name),
+            Self::ObjectAlreadyAdded(name) => write!(f, "object \"{}\" already added into the layer", name),
+            Self::ObjectAlreadyExists(name) => write!(f, "pbject \"{}\" alredy exists in the session", name),
         }
     }
 }
@@ -234,7 +242,7 @@ impl fmt::Display for Parse {
 
 impl From<postgres::Error> for Storage {
     fn from(err: postgres::Error) -> Self {
-        Self::MasterStorageRaw(err)
+        Self::Raw(err)
     }
 }
 
@@ -259,7 +267,7 @@ impl From<rusqlite::Error> for Error {
 impl fmt::Display for Storage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MasterStorageRaw(err) => write!(f, "[master] {}", err),
+            Self::Raw(err) => write!(f, "[storage] {}", err),
             Self::OccupiedSpacesRaw(err) => write!(f, "[oss] {}", err),
             Self::SetupSchema(err) => write!(f, "unable to setup schema: {}", err),
             Self::Transaction(err) => write!(f, "unable to start the transaction: {}", err),
@@ -274,9 +282,7 @@ impl fmt::Display for Storage {
             Self::SessionList(err) => write!(f, "unable to display session list: {}", err),
             Self::SessionGet(err) => write!(f, "unable to display current session: {}", err),
             Self::SessionDelete(err) => write!(f, "unable to delete the session: {}", err),
-            Self::AddObject(err) => write!(f, "unable to add object to the scene: {}", err),
-            Self::RenameObject(err) => write!(f, "unable to rename object to the scene: {}", err),
-            Self::ObjectList(err) => write!(f, "unable to display object list: {}", err),
+            Self::Object(err) => write!(f, "object error: {}", err),
             Self::OccupiedSpacesStorageInit(err) => write!(f, "unable to init OSS: {}", err),
             Self::AddOccupiedSpace(err) => write!(f, "unable to add occupied space: {}", err),
             Self::CheckPossibleCollisions(err) => {
@@ -290,33 +296,34 @@ impl fmt::Display for Storage {
             }
             Self::ReadOccupiedSpace(err) => write!(f, "unable to read occupied space: {}", err),
             Self::Layer(err) => write!(f, "layer error: {}", err),
+            Self::Location(err) => write!(f, "location error: {}", err),
         }
     }
 }
 
-impl From<Scene> for Error {
-    fn from(err: Scene) -> Self {
-        Self::Scene(err)
-    }
-}
+// impl From<Scene> for Error {
+//     fn from(err: Scene) -> Self {
+//         Self::Scene(err)
+//     }
+// }
 
-impl fmt::Display for Scene {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::UncomputedTrackPart(when, computed_range) => write!(
-                f,
-                "`{}`: is not in computed part ({} -> {})",
-                TimeFormat::VirtualTimeShort(*when),
-                TimeFormat::VirtualTimeShort(computed_range.start),
-                TimeFormat::VirtualTimeShort(computed_range.end),
-            ),
-            Self::ObjectAlreadyExists(obj_name) => {
-                write!(f, "`{}`: object already exists", obj_name)
-            }
-            Self::ObjectNotFound(obj_name) => write!(f, "`{}`: object not found", obj_name),
-        }
-    }
-}
+// impl fmt::Display for Scene {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         match self {
+//             Self::UncomputedTrackPart(when, computed_range) => write!(
+//                 f,
+//                 "`{}`: is not in computed part ({} -> {})",
+//                 TimeFormat::VirtualTimeShort(*when),
+//                 TimeFormat::VirtualTimeShort(computed_range.start),
+//                 TimeFormat::VirtualTimeShort(computed_range.end),
+//             ),
+//             Self::ObjectAlreadyExists(obj_name) => {
+//                 write!(f, "`{}`: object already exists", obj_name)
+//             }
+//             Self::ObjectNotFound(obj_name) => write!(f, "`{}`: object not found", obj_name),
+//         }
+//     }
+// }
 
 impl From<Physics> for Error {
     fn from(err: Physics) -> Self {

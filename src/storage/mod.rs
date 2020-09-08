@@ -16,16 +16,16 @@ use {
 
 pub mod layer;
 pub mod session;
-// pub mod object;
+pub mod object;
+pub mod location;
 
-// pub use object::Object;
 pub use layer::Layer;
 pub use session::Session;
-
-const LOG_TARGET: &'static str = "storage";
+pub use object::Object;
+pub use location::Location;
 
 #[macro_export]
-macro_rules! storage_map_err {
+macro_rules! map_err {
     ($($err:ident)::+) => {
         |err| $crate::make_error![$($err)::+(err)]
     };
@@ -44,11 +44,13 @@ macro_rules! query {
 
 #[macro_export]
 macro_rules! transaction {
-    ($storage:expr => $trans:ident $($tt:tt)*) => {{
+    ($storage:expr => $trans:ident $(($isolation_level:ident))? { $($tt:tt)* }) => {{
         let mut pooled_connection = $storage.pool.get()?;
 
         let mut $trans = pooled_connection
-            .transaction()
+            .build_transaction()
+            $(.isolation_level(postgres::IsolationLevel::$isolation_level))?
+            .start()
             .map_err(|err| $crate::make_error![Error::Storage::Transaction(err)])?;
 
         $($tt)*
@@ -123,6 +125,11 @@ pub trait StorageTransaction<'storage> {
     fn session<'t>(&'t mut self) -> session::Session<'t, 'storage>;
 
     fn layer<'t>(&'t mut self) -> layer::Layer<'t, 'storage>;
+
+    fn object<'t>(&'t mut self) -> object::Object<'t, 'storage>;
+
+    fn location<'t>(&'t mut self) -> location::Location<'t, 'storage>;
+
 }
 
 impl<'storage> StorageTransaction<'storage> for Transaction<'storage> {
@@ -132,5 +139,13 @@ impl<'storage> StorageTransaction<'storage> for Transaction<'storage> {
 
     fn layer<'t>(&'t mut self) -> layer::Layer<'t, 'storage> {
         layer::Layer::new_api(self)
+    }
+
+    fn object<'t>(&'t mut self) -> object::Object<'t, 'storage> {
+        object::Object::new_api(self)
+    }
+
+    fn location<'t>(&'t mut self) -> location::Location<'t, 'storage> {
+        location::Location::new_api(self)
     }
 }

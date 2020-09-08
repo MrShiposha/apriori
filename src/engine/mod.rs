@@ -1,7 +1,7 @@
 use {
     crate::{
         layer::Layer,
-        r#type::{LayerId, LayerName, RawTime, SessionId, SessionInfo, SessionName, TimeFormat},
+        r#type::{LayerId, LayerName, ObjectName, RawTime, SessionId, SessionInfo, SessionName, TimeFormat},
         storage::{self, StorageManager, StorageTransaction},
         transaction, Result,
     },
@@ -88,6 +88,10 @@ impl Engine {
 
     pub fn compute_locations(&mut self) {}
 
+    pub fn session_id(&self) -> SessionId {
+        self.session_id
+    }
+
     pub fn virtual_time(&self) -> chrono::Duration {
         self.virtual_time
     }
@@ -123,26 +127,38 @@ impl Engine {
         let active_layer_id = self.active_layer_id;
         let new_layer_start_time = self.virtual_time;
 
-        let result;
+        let new_layer_id;
 
         transaction! {
-            self.storage_mgr => t {
-                result = t.layer().add_layer(
+            self.storage_mgr => t(RepeatableRead) {
+                new_layer_id = t.layer().add_layer(
                     session_id,
                     active_layer_id,
                     layer.name(),
                     new_layer_start_time
-                );
+                )?;
+
+                for (object, coord) in layer.take_objects() {
+                    let object_id = t.object().add(session_id, new_layer_id, object)?;
+                    t.location().add(object_id, coord)?;
+                }
             }
         }
 
-        self.active_layer_id = result?;
-
-        // todo!(
-        //     "object addition"
-        // );
+        self.active_layer_id = new_layer_id;
 
         Ok(())
+    }
+
+    pub fn is_object_exists(&mut self, object_name: &ObjectName) -> Result<bool> {
+        let result;
+        transaction! {
+            self.storage_mgr => t {
+                result = t.object().is_object_exists(self.session_id, object_name);
+            }
+        }
+
+        result
     }
 
     pub fn get_layer_id(&mut self, layer_name: &LayerName) -> Result<LayerId> {
@@ -451,7 +467,7 @@ impl Engine {
         Ok(())
     }
 
-    fn request_simulation_info(&mut self, transaction: &mut Transaction) -> Result<()> {
+    fn request_simulation_info(&mut self, _transaction: &mut Transaction) -> Result<()> {
         // TODO load from DB
         Ok(())
     }

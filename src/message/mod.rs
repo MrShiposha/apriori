@@ -189,42 +189,6 @@ messages! {
         pub name: SessionName
     }
 
-    // #[cli(name = "add-obj", about = "add new object to the scene")]
-    // message AddObject {
-    //     /// Object's name.
-    //     #[structopt(short, long)]
-    //     pub name: Option<ObjectName>,
-
-    //     /// Object's location.
-    //     #[structopt(short, long, allow_hyphen_values = true, parse(try_from_str = cli::parse_vector))]
-    //     pub location: Vector,
-
-    //     /// When the object have to appear.
-    //     /// If this option have not specified, then the object will be added right now.
-    //     #[structopt(short, long, allow_hyphen_values = true, parse(try_from_str = cli::parse_time))]
-    //     pub time: Option<chrono::Duration>,
-
-    //     /// Object's color.
-    //     #[structopt(short, long, parse(try_from_str = cli::parse_color))]
-    //     pub color: Option<Color>,
-
-    //     /// Object's radius.
-    //     #[structopt(short, long, default_value = "1")]
-    //     pub radius: Distance,
-
-    //     /// Object's mass.
-    //     #[structopt(short, long, default_value = "1")]
-    //     pub mass: Mass,
-
-    //     /// Compute step
-    //     #[structopt(short, long, default_value = "1s", parse(try_from_str = cli::parse_time))]
-    //     pub step: chrono::Duration,
-
-    //     /// Buffered track size
-    //     #[structopt(long, default_value = "64")]
-    //     pub track_size: usize,
-    // }
-
     #[cli(name = "rename-obj", about = "rename object on the scene")]
     message RenameObject {
         /// Old object's name.
@@ -236,11 +200,14 @@ messages! {
         pub new_name: ObjectName
     }
 
-    #[cli(name = "list-objects", about = "list all objects in the current layer")]
-    message ListObjects {
-        /// List objects in the entire session
+    #[cli(name = "list-objects", about = "list all objects in the current session (or in the new layer)")]
+    message ListObjects {}
+
+    #[cli(name = "object-info", about = "print object's info")]
+    message ObjectInfo {
+        /// Object's name
         #[structopt(short, long)]
-        pub all: bool
+        pub name: ObjectName
     }
 
     #[cli(name = "names", about = "enable/disable scene's actors' names")]

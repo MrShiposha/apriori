@@ -2,6 +2,8 @@ use super::{
     cli,
     engine::Engine,
     layer,
+    object,
+    graphics,
     logger::LOGGER,
     make_error,
     message::{self, Message},
@@ -17,6 +19,7 @@ use kiss3d::{
     window::{CanvasSetup, NumSamples, Window},
 };
 use layer::Layer;
+use object::{Object, GenCoord};
 use log::{error, info};
 use nalgebra::{Point2, Point3 /*Vector2*/};
 use ptree;
@@ -80,6 +83,7 @@ pub struct App {
     is_names_displayed: bool,
     is_tracks_displayed: bool,
     track_step: chrono::Duration,
+    new_default_obj_index: usize,
 }
 
 impl App {
@@ -117,6 +121,7 @@ impl App {
             is_names_displayed: false,
             is_tracks_displayed: false,
             track_step: chrono::Duration::milliseconds(500),
+            new_default_obj_index: 0
         }
     }
 
@@ -173,20 +178,25 @@ impl App {
         match msg {
             Message::Layer(layer_msg) => {
                 match layer_msg {
-                    LayerMsg::AddObject(_) => {
-                        log::info! {
-                            target: LOG_TARGET,
-                            "[layer] add object"
-                        }
-                    }
+                    LayerMsg::AddObject(msg) => self.add_object_into_layer(msg),
                 }
-                Ok(())
             }
             Message::Submit(_) => self.submit_layer(),
             Message::Cancel(_) => {
                 let layer = self.new_layer.take().unwrap();
 
                 println!("--- cancel layer \"{}\" ---", layer.name());
+
+                Ok(())
+            }
+            Message::ListObjects(_) => self.list_new_layer_objects(),
+            Message::ObjectInfo(msg) => {
+                let layer = self.new_layer.as_ref().unwrap();
+
+                let (object, coord) = layer.get_object(&msg.name)
+                    .ok_or(make_error![Error::Layer::ObjectNotFound(msg.name)])?;
+
+                print_object_info(object, coord);
 
                 Ok(())
             }
@@ -357,7 +367,7 @@ impl App {
 
         println!("--- creating new layer \"{}\" ---", layer_name);
 
-        self.new_layer = Some(Layer::new(layer_name));
+        self.new_layer = Some(Layer::new(layer_name, self.engine.session_id()));
         Ok(())
     }
 
@@ -373,6 +383,56 @@ impl App {
         let layers_tree = self.engine.get_session_layers()?;
 
         ptree::print_tree(&layers_tree).map_err(|err| Error::Io(err))
+    }
+
+    fn list_new_layer_objects(&self) -> Result<()> {
+        let layer = self.new_layer.as_ref().unwrap();
+
+        println!(" --- layer \"{}\" objects ---", layer.name());
+        for (object, _) in layer.iter_objects() {
+            println!("\t{}", object.name());
+        }
+
+        Ok(())
+    }
+
+    fn add_object_into_layer(&mut self, msg: message::layer::AddObject) -> Result<()> {
+        let object_name = msg.name.unwrap_or_else(|| {
+            let default_name = format!("object-{}", self.new_default_obj_index);
+
+            self.new_default_obj_index += 1;
+
+            default_name
+        });
+
+        log::info! {
+            target: LOG_TARGET,
+            "[layer] add object \"{}\"",
+            object_name
+        }
+
+        // TODO check collisions
+        if self.engine.is_object_exists(&object_name)? {
+            Err(make_error!(Error::Layer::ObjectAlreadyExists(object_name)))
+        } else {
+            let layer = self.new_layer.as_mut().unwrap();
+
+            let object = Object::new(
+                object_name,
+                msg.radius,
+                msg.color.unwrap_or(graphics::random_color()),
+                msg.mass,
+                msg.step
+            );
+
+            let coord = GenCoord::new(
+                self.engine.virtual_time(),
+                msg.location,
+                msg.velocity
+            );
+
+            layer.add_object(object, coord)
+        }
     }
 
     fn check_window_opened(&mut self) {
@@ -742,6 +802,26 @@ impl App {
     //         last_location = new_location;
     //     }
     // }
+}
+
+fn print_object_info(object: &Object, coord: &GenCoord) {
+    println!();
+    println!("\"{}\": {{", object.name());
+    println!("\ttime = {}", TimeFormat::VirtualTimeShort(coord.time()));
+
+    let location = coord.location();
+    println!("\tlocation = {{{}, {}, {}}}", location[0], location[1], location[2]);
+
+    let velocty = coord.velocity();
+    println!("\tvelocity = {{{}, {}, {}}}", velocty[0], velocty[1], velocty[2]);
+
+    println!("\tradius = {}", object.radius());
+
+    let color = object.color();
+    println!("\tcolor = {{{}, {}, {}}}", color[0], color[1], color[2]);
+    println!("\tmass = {}", object.mass());
+    println!("\tcompute_step = {}", TimeFormat::VirtualTimeShort(object.compute_step()));
+    println!("}}");
 }
 
 #[derive(StructOpt)]

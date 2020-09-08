@@ -1,7 +1,7 @@
 use crate::{
     make_error, query,
     r#type::{IntoRustDuration, IntoStorageDuration, LayerId, LayerName, RawTime, SessionId},
-    storage_map_err, Result,
+    map_err, Result,
 };
 use postgres::Transaction;
 
@@ -18,7 +18,7 @@ impl<'t, 'storage> Layer<'t, 'storage> {
         self.transaction
             .query_one(query!["SELECT {schema_name}.layer_name($1);"], &[&layer_id])
             .map(|row| row.get(0))
-            .map_err(storage_map_err!(Error::Storage::Layer))
+            .map_err(map_err!(Error::Storage::Layer))
     }
 
     pub fn get_start_time(&mut self, layer_id: LayerId) -> Result<chrono::Duration> {
@@ -32,7 +32,7 @@ impl<'t, 'storage> Layer<'t, 'storage> {
 
                 raw_time.into_rust_duration()
             })
-            .map_err(storage_map_err!(Error::Storage::Layer))
+            .map_err(map_err!(Error::Storage::Layer))
     }
 
     pub fn rename_layer(&mut self, layer_id: LayerId, new_layer_name: &LayerName) -> Result<()> {
@@ -42,7 +42,7 @@ impl<'t, 'storage> Layer<'t, 'storage> {
                 &[&layer_id, &new_layer_name],
             )
             .map(|_| {})
-            .map_err(storage_map_err!(Error::Storage::Layer))
+            .map_err(map_err!(Error::Storage::Layer))
     }
 
     pub fn get_layer_id(
@@ -56,11 +56,21 @@ impl<'t, 'storage> Layer<'t, 'storage> {
                 query!["SELECT {schema_name}.layer_id($1, $2)"],
                 &[&session_id, layer_name],
             )
-            .map_err(storage_map_err!(Error::Storage::Layer))?;
+            .map_err(map_err!(Error::Storage::Layer))?;
 
         row.try_get(0)
             .map_err(|_| make_error![Error::Layer::LayerNotFound(layer_name.clone())])
     }
+
+    // pub fn get_layer_object_ids(&mut self, layer_id: LayerId) -> Result<Vec<ObjectId>> {
+    //     self.transaction
+    //         .query_one(
+    //             query!["SELECT {schema_name}.layer_object_ids($1)"],
+    //             &[&layer_id],
+    //         )
+    //         .map(|row| row.try_get(0).unwrap_or(vec![]))
+    //         .map_err(map_err!(Error::Storage::Layer))
+    // }
 
     pub fn get_main_layer(&mut self, session_id: SessionId) -> Result<LayerId> {
         self.transaction
@@ -69,7 +79,7 @@ impl<'t, 'storage> Layer<'t, 'storage> {
                 &[&session_id],
             )
             .map(|row| row.get(0))
-            .map_err(storage_map_err!(Error::Storage::Layer))
+            .map_err(map_err!(Error::Storage::Layer))
     }
 
     pub fn get_layer_children(
@@ -83,7 +93,7 @@ impl<'t, 'storage> Layer<'t, 'storage> {
                 &[&session_id, &layer_id],
             )
             .map(|row| row.try_get(0).unwrap_or(vec![]))
-            .map_err(storage_map_err!(Error::Storage::Layer))
+            .map_err(map_err!(Error::Storage::Layer))
     }
 
     pub fn get_current_layer_id(
@@ -97,7 +107,7 @@ impl<'t, 'storage> Layer<'t, 'storage> {
                 &[&active_layer_id, &vtime.into_storage_duration()],
             )
             .map(|row| row.get(0))
-            .map_err(storage_map_err!(Error::Storage::Layer))
+            .map_err(map_err!(Error::Storage::Layer))
     }
 
     pub fn add_layer(
@@ -125,7 +135,7 @@ impl<'t, 'storage> Layer<'t, 'storage> {
                 ],
             )
             .map(|row| row.get(0))
-            .map_err(storage_map_err!(Error::Storage::Layer))
+            .map_err(map_err!(Error::Storage::Layer))
     }
 
     pub fn layer_ancestors(&mut self, layer_id: LayerId) -> Result<Vec<LayerId>> {
@@ -135,7 +145,7 @@ impl<'t, 'storage> Layer<'t, 'storage> {
                 query!["SELECT layer_id FROM {schema_name}.layer_ancestors($1)"],
                 &[&layer_id],
             )
-            .map_err(storage_map_err!(Error::Storage::Layer))?;
+            .map_err(map_err!(Error::Storage::Layer))?;
 
         Ok(rows.into_iter().map(|row| row.get(0)).collect())
     }
@@ -144,6 +154,6 @@ impl<'t, 'storage> Layer<'t, 'storage> {
         self.transaction
             .execute(query!["CALL {schema_name}.remove_layer($1)"], &[&layer_id])
             .map(|_| {})
-            .map_err(storage_map_err!(Error::Storage::Layer))
+            .map_err(map_err!(Error::Storage::Layer))
     }
 }
