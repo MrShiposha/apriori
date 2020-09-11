@@ -92,6 +92,7 @@ impl StorageManager {
                 {location}
                 {session_triggers}
                 {layer_triggers}
+                {location_triggers}
             "#,
             schema = query![include_str!("sql/setup/schema.sql")],
             session = query! {
@@ -102,7 +103,8 @@ impl StorageManager {
             object = query![include_str!["sql/setup/object.sql"]],
             location = query![include_str!["sql/setup/location.sql"]],
             session_triggers = query![include_str!("sql/setup/session_triggers.sql")],
-            layer_triggers = query![include_str!("sql/setup/layer_triggers.sql")]
+            layer_triggers = query![include_str!("sql/setup/layer_triggers.sql")],
+            location_triggers = query![include_str!("sql/setup/location_triggers.sql")],
         };
 
         psql.batch_execute(setup_query.as_str())

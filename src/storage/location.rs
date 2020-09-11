@@ -1,7 +1,7 @@
 use crate::{
     query,
     object::GenCoord,
-    r#type::{IntoStorageDuration, ObjectId},
+    r#type::{AsAbsoluteTime, IntoStorageDuration, LayerId, ObjectId},
     map_err, Result,
 };
 use postgres::Transaction;
@@ -15,16 +15,17 @@ impl<'t, 'storage> Location<'t, 'storage> {
         Self { transaction }
     }
 
-    pub fn add(&mut self, object_id: ObjectId, coord: GenCoord) -> Result<()> {
+    pub fn add(&mut self, object_id: ObjectId, layer_id: LayerId, coord: GenCoord) -> Result<()> {
         let location = coord.location();
         let velocity = coord.velocity();
 
         self.transaction
             .execute(
-                query!["CALL {schema_name}.add_location($1, $2, $3, $4, $5, $6, $7, $8)"],
+                query!["CALL {schema_name}.add_location($1, $2, $3, $4, $5, $6, $7, $8, $9)"],
                 &[
                     &object_id,
-                    &coord.time().into_storage_duration(),
+                    &layer_id,
+                    &coord.time().as_absolute_time().into_storage_duration(),
                     &location[0],
                     &location[1],
                     &location[2],

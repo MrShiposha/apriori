@@ -7,7 +7,7 @@ use super::{
     logger::LOGGER,
     make_error,
     message::{self, Message},
-    r#type::{Color, RawTime, SessionInfo, TimeFormat, TimeUnit},
+    r#type::{Color, RawTime, SessionInfo, TimeFormat, TimeUnit, AsRelativeTime, AsAbsoluteTime},
     shared_access, Error, Result, Shared,
 };
 use kiss3d::{
@@ -129,7 +129,7 @@ impl App {
         let cli = cli::Observer::new(self.state.share(), history);
 
         loop {
-            let loop_begin = time::precise_time_ns();
+            let loop_begin = epoch_offset_ns();
 
             self.handle_window_events();
 
@@ -152,8 +152,8 @@ impl App {
             self.render_frame();
             self.process_console(&cli);
 
-            let loop_end = time::precise_time_ns();
-            let loop_time = loop_end - loop_begin;
+            let loop_end = epoch_offset_ns();
+            let loop_time = (loop_end - loop_begin) as RawTime;
 
             let frame_delta_ns = loop_time as RawTime;
             self.engine.advance_time(frame_delta_ns, advance_vtime);
@@ -426,7 +426,7 @@ impl App {
             );
 
             let coord = GenCoord::new(
-                self.engine.virtual_time(),
+                self.engine.virtual_time().as_relative_time(),
                 msg.location,
                 msg.velocity
             );
@@ -807,7 +807,7 @@ impl App {
 fn print_object_info(object: &Object, coord: &GenCoord) {
     println!();
     println!("\"{}\": {{", object.name());
-    println!("\ttime = {}", TimeFormat::VirtualTimeShort(coord.time()));
+    println!("\ttime = {}", TimeFormat::VirtualTimeShort(coord.time().as_absolute_time()));
 
     let location = coord.location();
     println!("\tlocation = {{{}, {}, {}}}", location[0], location[1], location[2]);
@@ -822,6 +822,10 @@ fn print_object_info(object: &Object, coord: &GenCoord) {
     println!("\tmass = {}", object.mass());
     println!("\tcompute_step = {}", TimeFormat::VirtualTimeShort(object.compute_step()));
     println!("}}");
+}
+
+fn epoch_offset_ns() -> i128 {
+    (time::OffsetDateTime::now_utc() - time::OffsetDateTime::unix_epoch()).whole_nanoseconds()
 }
 
 #[derive(StructOpt)]

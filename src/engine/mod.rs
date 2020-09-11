@@ -11,6 +11,10 @@ use {
     ptree::{item::StringItem, TreeBuilder},
 };
 
+pub mod context;
+pub mod actor;
+mod util;
+
 const CONNECTION_STRING: &'static str = "host=localhost user=postgres";
 const LOG_TARGET: &'static str = "engine";
 
@@ -140,7 +144,7 @@ impl Engine {
 
                 for (object, coord) in layer.take_objects() {
                     let object_id = t.object().add(session_id, new_layer_id, object)?;
-                    t.location().add(object_id, coord)?;
+                    t.location().add(object_id, new_layer_id, coord)?;
                 }
             }
         }
@@ -305,9 +309,9 @@ impl Engine {
 
         let children = layer_api.get_layer_children(self.session_id, parent_layer_id)?;
 
-        if children.is_empty() {
-            builder.add_empty_child(layer_info);
-        } else {
+        // if children.is_empty() {
+        //     builder.add_empty_child(layer_info);
+        // } else {
             builder.begin_child(layer_info);
 
             for &child_id in children.iter() {
@@ -315,7 +319,7 @@ impl Engine {
             }
 
             builder.end_child();
-        }
+        // }
 
         Ok(())
     }

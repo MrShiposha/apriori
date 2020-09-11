@@ -10,6 +10,9 @@ use {
             Mass,
             IntoRustDuration,
             IntoStorageDuration,
+            RelativeTime,
+            AsRelativeTime,
+            AsAbsoluteTime,
             RawTime,
             Vector,
         },
@@ -25,7 +28,7 @@ use {
 const OBJECT_FIELDS_LEN: usize = 6;
 const GEN_COORD_FIELDS_LEN: usize = 8;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Object {
     layer_id: LayerId,
     name: ObjectName,
@@ -75,6 +78,19 @@ impl Object {
 
     pub fn compute_step(&self) -> chrono::Duration {
         self.compute_step
+    }
+}
+
+impl Default for Object {
+    fn default() -> Self {
+        Self {
+            layer_id: Default::default(),
+            name: Default::default(),
+            radius: Default::default(),
+            color: Color::origin(),
+            mass: Default::default(),
+            compute_step: chrono::Duration::zero(),
+        }
     }
 }
 
@@ -172,15 +188,15 @@ impl Borrow<ObjectName> for Object {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GenCoord {
-    time: chrono::Duration,
+    time: RelativeTime,
     location: Vector,
     velocity: Vector,
 }
 
 impl GenCoord {
-    pub fn new(time: chrono::Duration, location: Vector, velocity: Vector) -> Self {
+    pub fn new(time: RelativeTime, location: Vector, velocity: Vector) -> Self {
         Self {
             time,
             location,
@@ -188,7 +204,7 @@ impl GenCoord {
         }
     }
 
-    pub fn time(&self) -> chrono::Duration {
+    pub fn time(&self) -> RelativeTime {
         self.time
     }
 
@@ -213,7 +229,7 @@ impl Serialize for ObjectGenCoord {
         let ObjectGenCoord(object_id, coord) = self;
 
         tuple_seq.serialize_element(object_id)?;
-        tuple_seq.serialize_element(&coord.time.into_storage_duration())?;
+        tuple_seq.serialize_element(&coord.time.as_absolute_time().into_storage_duration())?;
         tuple_seq.serialize_element(&coord.location[0])?;
         tuple_seq.serialize_element(&coord.location[1])?;
         tuple_seq.serialize_element(&coord.location[2])?;
@@ -243,7 +259,7 @@ impl<'de> Deserialize<'de> for ObjectGenCoord {
                 let object_id = seq.next_element()?.expect("expected object ID");
 
                 let time: RawTime = seq.next_element()?.expect("expected time");
-                let time = time.into_rust_duration();
+                let time = time.into_rust_duration().as_relative_time();
 
                 let lx = seq.next_element()?.expect("expected x coord");
                 let ly = seq.next_element()?.expect("expected y coord");
