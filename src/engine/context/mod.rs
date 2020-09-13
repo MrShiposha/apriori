@@ -14,7 +14,6 @@ use {
         Error,
         r#type::{SessionId, LayerId, ObjectId, LocationId, ObjectName, Coord, AsRelativeTime, IntoStorageDuration},
         engine::actor::{Actor, TrackPartId, TrackPartsSpace},
-        object::Object,
         storage::StorageManager,
     },
     log::info,

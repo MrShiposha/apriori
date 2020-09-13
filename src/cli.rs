@@ -27,7 +27,6 @@ lazy_static! {
 type Editor = rustyline::Editor<Helper>;
 
 pub struct Observer {
-    thread: thread::JoinHandle<()>,
     recv: mpsc::Receiver<Message>,
 }
 
@@ -35,26 +34,23 @@ impl Observer {
     pub fn new(app_state: Shared<app::State>, history: Option<PathBuf>) -> Self {
         let (sender, receiver) = mpsc::channel();
 
-        Self {
-            thread: thread::spawn(move || {
-                let mut editor = default_editor();
-                if let Some(history) = history {
-                    if let Err(err) = editor.load_history(&history) {
-                        log::error! {
-                            target: LOG_TARGET,
-                            "unable to open history file `{}`: {}", history.display(), err
-                        }
+        thread::spawn(move || {
+            let mut editor = default_editor();
+            if let Some(history) = history {
+                if let Err(err) = editor.load_history(&history) {
+                    log::error! {
+                        target: LOG_TARGET,
+                        "unable to open history file `{}`: {}", history.display(), err
                     }
                 }
+            }
 
-                message_loop(app_state, editor, sender);
-            }),
+            message_loop(app_state, editor, sender);
+        });
+
+        Self {
             recv: receiver,
         }
-    }
-
-    pub fn join(self) {
-        self.thread.join().unwrap();
     }
 
     pub fn try_recv(&self) -> std::result::Result<Message, mpsc::TryRecvError> {
@@ -239,7 +235,7 @@ fn read_message(editor: &mut Editor) -> super::Result<Message> {
 fn message_loop(app_state: Shared<app::State>, mut editor: Editor, sender: mpsc::Sender<Message>) {
     let mut is_completed = false;
 
-    while !is_completed && !shared_access![app_state].is_off() {
+    while !is_completed && shared_access![app_state].is_run() {
         match read_message(&mut editor) {
             Ok(message) => {
                 is_completed = matches![message, Message::Shutdown(_) | Message::ShutdownShort(_)];

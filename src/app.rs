@@ -7,7 +7,7 @@ use super::{
     logger::LOGGER,
     make_error,
     message::{self, Message},
-    r#type::{Color, RawTime, SessionInfo, TimeFormat, TimeUnit, AsRelativeTime, AsAbsoluteTime, LayerId},
+    r#type::{Color, SessionInfo, TimeFormat, TimeUnit, LayerId},
     shared_access, Error, Result, Shared,
 };
 use kiss3d::{
@@ -33,20 +33,16 @@ use structopt::StructOpt;
 const LOG_TARGET: &'static str = "application";
 pub const APP_NAME: &'static str = "apriori";
 
-const CLOSE_MESSAGE: &'static str =
-    "Simulation is completed.\nTo close the application, run `shutdown` message.";
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum State {
     Simulating,
     Paused,
     Completed,
-    Off,
 }
 
 impl State {
     pub fn is_run(&self) -> bool {
-        !self.is_completed() && !self.is_off()
+        !self.is_completed()
     }
 
     pub fn is_paused(&self) -> bool {
@@ -56,10 +52,6 @@ impl State {
     pub fn is_completed(&self) -> bool {
         matches![self, State::Completed]
     }
-
-    pub fn is_off(&self) -> bool {
-        matches![self, State::Off]
-    }
 }
 
 impl fmt::Display for State {
@@ -68,7 +60,6 @@ impl fmt::Display for State {
             State::Simulating => write!(f, "[SIMULATING]"),
             State::Paused => write!(f, "[PAUSED]"),
             State::Completed => write!(f, "[COMPLETED]"),
-            State::Off => write!(f, "[OFF]"),
         }
     }
 }
@@ -142,12 +133,7 @@ impl App {
                     advance_vtime = true;
                 }
                 State::Paused => advance_vtime = false,
-                State::Completed => {
-                    self.draw_text(CLOSE_MESSAGE, Point2::origin(), Color::new(1.0, 0.0, 0.0));
-                    self.is_stats_enabled = false;
-                    advance_vtime = false;
-                }
-                State::Off => break,
+                State::Completed => break
             }
 
             self.render_frame();
@@ -160,14 +146,13 @@ impl App {
             self.engine.advance_time(frame_delta_ns, advance_vtime)?;
         }
 
-        cli.join();
+        // cli.join();
 
         Ok(())
     }
 
     pub fn handle_message(&mut self, message: Message) -> Result<()> {
         let state = *shared_access![self.state];
-        assert_ne!(state, State::Off);
 
         match self.new_layer {
             Some(_) => self.handle_layer_msg(message),
@@ -447,19 +432,13 @@ impl App {
     }
 
     fn close(&mut self) {
-        error! {
-            target: LOG_TARGET,
-            "{}", CLOSE_MESSAGE
-        }
-
         *self.window.scene_mut() = SceneNode::new_empty();
 
         *shared_access![mut self.state] = State::Completed;
     }
 
     fn shutdown(&mut self) -> Result<()> {
-        *shared_access![mut self.state] = State::Off;
-        // self.engine.shutdown()
+        *shared_access![mut self.state] = State::Completed;
         Ok(())
     }
 
