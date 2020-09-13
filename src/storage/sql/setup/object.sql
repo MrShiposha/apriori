@@ -86,3 +86,44 @@ AS $$
         );
     END
 $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION {schema_name}.current_objects_delta(
+    active_layer_id integer,
+    known_objects_ids bigint[]
+) RETURNS TABLE(
+    out_object_id bigint,
+    out_layer_fk_id integer,
+    out_object_name varchar(50),
+    out_radius real,
+    out_color integer,
+    out_mass real,
+    out_compute_step bigint
+) AS $$
+    BEGIN
+        RETURN QUERY
+        WITH layers AS (
+            SELECT
+                layer_id
+            FROM
+                {schema_name}.layer_ancestors(active_layer_id)
+        )
+        SELECT
+            object_id,
+            layer_fk_id,
+            object_name,
+            radius,
+            color,
+            mass,
+            compute_step
+        FROM {schema_name}.object
+        WHERE object_id = ANY(
+            SELECT
+                object_id
+            FROM {schema_name}.object
+            INNER JOIN layers
+                ON layer_fk_id = layers.layer_id
+            EXCEPT
+            SELECT UNNEST(known_objects_ids)
+        );
+    END
+$$ LANGUAGE plpgsql;

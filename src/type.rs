@@ -23,6 +23,7 @@ pub type LayerName = String;
 pub type LayerId = i32;
 pub type ObjectName = String;
 pub type ObjectId = i64;
+pub type LocationId = i64;
 
 const DAYS_IN_WEEK: RawTime = 7;
 const HOURS_IN_DAY: RawTime = 24;

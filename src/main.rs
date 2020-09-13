@@ -26,5 +26,5 @@ fn main() {
 
     let mut app = app::App::new(options.log_filter);
 
-    app.run(options.history_file);
+    app.run(options.history_file).unwrap();
 }

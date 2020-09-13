@@ -1,7 +1,7 @@
 use {
     crate::{
         object::GenCoord,
-        r#type::{Coord, Distance},
+        r#type::{Coord, Distance, AsRelativeTime},
     },
     lr_tree::*
 };
@@ -13,7 +13,7 @@ pub fn radius_mbr(coord: &GenCoord, radius: Distance) -> MBR<Coord> {
         };
     }
 
-    let t = coord.time();
+    let t = coord.time().as_relative_time();
 
     let location = coord.location();
     let (x_min, x_max) = min_max![location[0]];
@@ -29,14 +29,14 @@ pub fn radius_mbr(coord: &GenCoord, radius: Distance) -> MBR<Coord> {
 }
 
 pub fn coords_mbr(lhs: &GenCoord, rhs: &GenCoord) -> MBR<Coord> {
-    let lhs_t = lhs.time();
+    let lhs_t = lhs.time().as_relative_time();
 
     let location = lhs.location();
     let lhs_x = location[0];
     let lhs_y = location[0];
     let lhs_z = location[0];
 
-    let rhs_t = rhs.time();
+    let rhs_t = rhs.time().as_relative_time();
 
     let location = rhs.location();
     let rhs_x = location[0];

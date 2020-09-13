@@ -85,6 +85,7 @@ dependencies = [
  "clap",
  "css-color-parser",
  "csv",
+ "itertools",
  "kiss3d",
  "lazy_static 1.4.0",
  "log",
@@ -97,12 +98,12 @@ dependencies = [
  "r2d2",
  "r2d2_postgres",
  "rand 0.7.3",
+ "rayon",
  "regex",
  "rustyline",
- "serde 1.0.115",
+ "serde 1.0.116",
  "structopt",
- "threadpool",
- "time 0.2.18",
+ "time 0.2.19",
 ]
 
 [[package]]
@@ -218,7 +219,7 @@ dependencies = [
  "lazy_static 1.4.0",
  "memchr",
  "regex-automata",
- "serde 1.0.115",
+ "serde 1.0.116",
 ]
 
 [[package]]
@@ -335,7 +336,7 @@ dependencies = [
  "lazy_static 1.4.0",
  "nom",
  "rust-ini",
- "serde 1.0.115",
+ "serde 1.0.116",
  "serde-hjson",
  "serde_json",
  "toml",
@@ -473,7 +474,7 @@ dependencies = [
  "csv-core",
  "itoa",
  "ryu",
- "serde 1.0.115",
+ "serde 1.0.116",
 ]
 
 [[package]]
@@ -490,7 +491,7 @@ name = "dbg-vis"
 version = "0.1.0"
 source = "git+https://github.com/MrShiposha/dbg-vis.git#a056b391323c18fff83670cb94b58b3bbbc39f1c"
 dependencies = [
- "serde 1.0.115",
+ "serde 1.0.116",
  "serde_json",
 ]
 
@@ -889,7 +890,7 @@ dependencies = [
 [[package]]
 name = "id-storage"
 version = "0.1.0"
-source = "git+https://github.com/MrShiposha/id-storage.git#403ee841d53c6e9c7a4810a06c95d46d69d7d813"
+source = "git+https://github.com/MrShiposha/id-storage.git#a20460730ab3550dc4ebf87f27b0a9f5c989d424"
 
 [[package]]
 name = "image"
@@ -946,6 +947,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "284f18f85651fe11e8a991b2adb42cb078325c996ed026d994719efcfca1d54b"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -994,7 +1004,7 @@ dependencies = [
  "ncollide3d",
  "num-traits 0.2.12",
  "rusttype 0.8.3",
- "serde 1.0.115",
+ "serde 1.0.116",
  "serde_derive",
  "stdweb",
  "stdweb-derive",
@@ -1103,7 +1113,7 @@ dependencies = [
 [[package]]
 name = "lr-tree"
 version = "0.1.0"
-source = "git+https://github.com/MrShiposha/lr-tree.git#5561f7f61c847b739c67d88c4e4e25e9a2c5ee8c"
+source = "git+https://github.com/MrShiposha/lr-tree.git#d4face9e41df08f9f58c597fe25007283fad24ee"
 dependencies = [
  "dbg-vis",
  "float-ord",
@@ -1808,7 +1818,7 @@ dependencies = [
  "config",
  "directories",
  "petgraph",
- "serde 1.0.115",
+ "serde 1.0.116",
  "serde-value",
  "tint",
 ]
@@ -2249,9 +2259,9 @@ checksum = "9dad3f759919b92c3068c696c15c3d17238234498bbdcc80f2c469606f948ac8"
 
 [[package]]
 name = "serde"
-version = "1.0.115"
+version = "1.0.116"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e54c9a88f2da7238af84b5101443f0c0d0a3bbdc455e34a5c9497b1903ed55d5"
+checksum = "96fe57af81d28386a513cbc6858332abc6117cfdb5999647c6444b8f43a370a5"
 dependencies = [
  "serde_derive",
 ]
@@ -2276,14 +2286,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a65a7291a8a568adcae4c10a677ebcedbc6c9cec91c054dee2ce40b0e3290eb"
 dependencies = [
  "ordered-float",
- "serde 1.0.115",
+ "serde 1.0.116",
 ]
 
 [[package]]
 name = "serde_derive"
-version = "1.0.115"
+version = "1.0.116"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "609feed1d0a73cc36a0182a840a9b37b4a82f0b1150369f0536a9e3f2a31dc48"
+checksum = "f630a6370fd8e457873b4bd2ffdae75408bc291ba72be773772a4c2a065d9ae8"
 dependencies = [
  "proc-macro2 1.0.21",
  "quote 1.0.7",
@@ -2298,7 +2308,7 @@ checksum = "164eacbdb13512ec2745fb09d51fd5b22b0d65ed294a1dcf7285a360c80a675c"
 dependencies = [
  "itoa",
  "ryu",
- "serde 1.0.115",
+ "serde 1.0.116",
 ]
 
 [[package]]
@@ -2439,7 +2449,7 @@ checksum = "d022496b16281348b52d0e30ae99e01a73d737b2f45d38fed4edf79f9325a1d5"
 dependencies = [
  "discard",
  "rustc_version",
- "serde 1.0.115",
+ "serde 1.0.116",
  "serde_json",
  "stdweb-derive",
  "stdweb-internal-macros",
@@ -2455,7 +2465,7 @@ checksum = "c87a60a40fccc84bef0652345bbbbbe20a605bf5d0ce81719fc476f5c03b50ef"
 dependencies = [
  "proc-macro2 1.0.21",
  "quote 1.0.7",
- "serde 1.0.115",
+ "serde 1.0.116",
  "serde_derive",
  "syn 1.0.40",
 ]
@@ -2469,7 +2479,7 @@ dependencies = [
  "base-x",
  "proc-macro2 1.0.21",
  "quote 1.0.7",
- "serde 1.0.115",
+ "serde 1.0.116",
  "serde_derive",
  "serde_json",
  "sha1",
@@ -2569,15 +2579,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "threadpool"
-version = "1.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d050e60b33d41c19108b32cea32164033a9013fe3b46cbd4457559bfbf77afaa"
-dependencies = [
- "num_cpus",
-]
-
-[[package]]
 name = "tiff"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2602,9 +2603,9 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.2.18"
+version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12785163ae8a1cbb52a5db39af4a5baabd3fe49f07f76f952f89d7e89e5ce531"
+checksum = "80c1a1fd93112fc50b11c43a1def21f926be3c18884fad676ea879572da070a1"
 dependencies = [
  "const_fn",
  "libc",
@@ -2713,7 +2714,7 @@ version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ffc92d160b1eef40665be3a05630d003936a3bc7da7421277846c2613e92c71a"
 dependencies = [
- "serde 1.0.115",
+ "serde 1.0.116",
 ]
 
 [[package]]

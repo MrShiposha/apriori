@@ -1,19 +1,29 @@
 use {
+    std::sync::{
+        Arc,
+        mpsc,
+    },
     crate::{
+        Result,
+        Error,
         layer::Layer,
         r#type::{LayerId, LayerName, ObjectName, RawTime, SessionId, SessionInfo, SessionName, TimeFormat},
         storage::{self, StorageManager, StorageTransaction},
-        transaction, Result,
+        transaction,
     },
     lazy_static::lazy_static,
     log::{error, trace, warn},
-    postgres::Transaction,
     ptree::{item::StringItem, TreeBuilder},
+    kiss3d::scene::SceneNode
 };
 
 pub mod context;
 pub mod actor;
+pub mod scene;
 mod util;
+
+use context::{Context, TimeRange};
+use scene::Scene;
 
 const CONNECTION_STRING: &'static str = "host=localhost user=postgres";
 const LOG_TARGET: &'static str = "engine";
@@ -26,8 +36,10 @@ lazy_static! {
 
 pub struct Engine {
     storage_mgr: StorageManager,
-    session_id: SessionId,
-    active_layer_id: LayerId,
+    context: Arc<Context>,
+    context_recv: mpsc::Receiver<Context>,
+    context_upd_intrp: mpsc::Sender<()>,
+    scene: Scene,
     real_time: chrono::Duration,
     last_session_update_time: chrono::Duration,
     virtual_time: chrono::Duration,
@@ -35,19 +47,25 @@ pub struct Engine {
     last_frame_delta: chrono::Duration,
     frames_sum_time_ms: usize,
     frame_count: usize,
+    target_time_range: Option<TimeRange>,
+    wait_for_new_context: bool,
 }
 
 impl Engine {
-    pub fn init() -> Result<Self> {
-        let storage_mgr = StorageManager::setup(CONNECTION_STRING, *SESSION_MAX_HANG_TIME)?;
-
-        let session_id = 0;
-        let active_layer_id = 0;
+    pub fn init(root_scene_node: SceneNode) -> Result<Self> {
+        let storage_mgr = StorageManager::setup(
+            CONNECTION_STRING,
+            *SESSION_MAX_HANG_TIME
+        )?;
+        let (_, context_recv) = mpsc::channel();
+        let (context_upd_intrp, _) = mpsc::channel();
 
         let mut engine = Self {
             storage_mgr,
-            session_id,
-            active_layer_id,
+            context: Arc::new(Context::new(SessionId::default(), LayerId::default())),
+            context_recv,
+            context_upd_intrp,
+            scene: Scene::new(root_scene_node),
             real_time: chrono::Duration::zero(),
             last_session_update_time: chrono::Duration::zero(),
             virtual_time: chrono::Duration::zero(),
@@ -55,6 +73,8 @@ impl Engine {
             last_frame_delta: chrono::Duration::zero(),
             frames_sum_time_ms: 0,
             frame_count: 0,
+            target_time_range: None,
+            wait_for_new_context: false,
         };
 
         let session_name = None;
@@ -64,18 +84,34 @@ impl Engine {
         Ok(engine)
     }
 
-    pub fn advance_time(&mut self, frame_delta_ns: RawTime, advance_virtual_time: bool) {
-        let one_second_ns = chrono::Duration::seconds(1).num_nanoseconds().unwrap();
+    pub fn advance_time(&mut self, frame_delta_ns: i128, advance_virtual_time: bool) -> Result<()> {
+        match self.context_recv.try_recv() {
+            Ok(new_context) => self.set_new_context(new_context)?,
+            Err(mpsc::TryRecvError::Empty) if self.wait_for_new_context => {
+                trace! {
+                    target: LOG_TARGET,
+                    "waiting for a new context"
+                }
+
+                let new_context = self.context_recv.recv()
+                    .map_err(|_| Error::ContextUpdateInterrupted)?;
+
+                self.set_new_context(new_context)?;
+            },
+            _ => {}
+        }
+
+        let one_second_ns = chrono::Duration::seconds(1).num_nanoseconds().unwrap() as i128;
         let ns_per_ms = 1_000_000;
 
-        let vt_step_ns = self.virtual_step.num_nanoseconds().unwrap();
-        let real_step = frame_delta_ns * vt_step_ns / one_second_ns;
+        let vt_step_ns = self.virtual_step.num_milliseconds() as i128 * ns_per_ms;
+        let real_step = (frame_delta_ns as i128 * vt_step_ns / one_second_ns) as RawTime;
 
         if advance_virtual_time {
             self.virtual_time = self.virtual_time + chrono::Duration::nanoseconds(real_step);
         }
 
-        self.last_frame_delta = chrono::Duration::nanoseconds(frame_delta_ns);
+        self.last_frame_delta = chrono::Duration::milliseconds((frame_delta_ns / ns_per_ms) as RawTime);
         self.real_time = self.real_time + self.last_frame_delta;
 
         self.frames_sum_time_ms += (frame_delta_ns / ns_per_ms) as usize;
@@ -88,22 +124,37 @@ impl Engine {
                 err
             }
         });
+
+        Ok(())
     }
 
     pub fn compute_locations(&mut self) {}
 
-    pub fn session_id(&self) -> SessionId {
-        self.session_id
+    pub fn context(&self) -> &Context {
+        &self.context
     }
 
     pub fn virtual_time(&self) -> chrono::Duration {
         self.virtual_time
     }
 
-    pub fn set_virtual_time(&mut self, vtime: chrono::Duration) {
-        // TODO load from DB if needed
-
+    pub fn set_virtual_time(
+        &mut self,
+        vtime: chrono::Duration,
+        try_current_context: bool
+    ) -> Result<()> {
+        self.wait_for_new_context = true;
         self.virtual_time = vtime;
+
+        if try_current_context && self.context().time_range().contains(vtime) {
+            return Ok(());
+        }
+
+        self.spawn_context_change(
+            self.context().session_id(),
+            self.context().layer_id(),
+            TimeRange::with_default_len(vtime)
+        )
     }
 
     pub fn virtual_step(&self) -> chrono::Duration {
@@ -127,8 +178,8 @@ impl Engine {
     }
 
     pub fn add_layer(&mut self, layer: Layer) -> Result<()> {
-        let session_id = self.session_id;
-        let active_layer_id = self.active_layer_id;
+        let session_id = self.context.session_id();
+        let active_layer_id = self.context.layer_id();
         let new_layer_start_time = self.virtual_time;
 
         let new_layer_id;
@@ -149,16 +200,14 @@ impl Engine {
             }
         }
 
-        self.active_layer_id = new_layer_id;
-
-        Ok(())
+        self.select_layer_helper(new_layer_id)
     }
 
     pub fn is_object_exists(&mut self, object_name: &ObjectName) -> Result<bool> {
         let result;
         transaction! {
             self.storage_mgr => t {
-                result = t.object().is_object_exists(self.session_id, object_name);
+                result = t.object().is_object_exists(self.context.session_id(), object_name);
             }
         }
 
@@ -170,7 +219,7 @@ impl Engine {
 
         transaction! {
             self.storage_mgr => t {
-                result = t.layer().get_layer_id(self.session_id, layer_name);
+                result = t.layer().get_layer_id(self.context.session_id(), layer_name);
             }
         }
 
@@ -183,7 +232,7 @@ impl Engine {
                 match self.get_layer_id(layer_name) {
                     Ok(layer_id) => {
                         let mut layer = t.layer();
-                        let active_ancestors = layer.layer_ancestors(self.active_layer_id)?;
+                        let active_ancestors = layer.layer_ancestors(self.context.layer_id())?;
 
                         if active_ancestors.contains(&layer_id) {
                             error! {
@@ -211,7 +260,7 @@ impl Engine {
             self.storage_mgr => t {
                 let mut layer = t.layer();
 
-                let id = layer.get_layer_id(self.session_id, old_layer_name)?;
+                let id = layer.get_layer_id(self.context.session_id(), old_layer_name)?;
 
                 layer.rename_layer(id, new_layer_name)?;
             }
@@ -221,7 +270,7 @@ impl Engine {
     }
 
     pub fn active_layer_name(&mut self) -> Result<LayerName> {
-        let id = self.active_layer_id;
+        let id = self.context.layer_id();
 
         let result;
         transaction! {
@@ -249,21 +298,22 @@ impl Engine {
     }
 
     fn current_layer_id(&mut self, layer_api: &mut storage::Layer) -> Result<LayerId> {
-        layer_api.get_current_layer_id(self.active_layer_id, self.virtual_time)
+        layer_api.get_current_layer_id(self.context.layer_id(), self.virtual_time)
     }
 
     pub fn get_session_layers(&mut self) -> Result<StringItem> {
         let result;
         transaction! {
             self.storage_mgr => t {
-                let session_name = t.session().get_name(self.session_id)?;
+                let session_id = self.context.session_id();
+                let session_name = t.session().get_name(session_id)?;
 
                 let tree_title = format!("layers of the session \"{}\"", session_name);
                 let mut builder = TreeBuilder::new(tree_title);
 
                 let mut layer = t.layer();
                 let current_layer_id = self.current_layer_id(&mut layer)?;
-                let parent_layer_id = layer.get_main_layer(self.session_id)?;
+                let parent_layer_id = layer.get_main_layer(session_id)?;
 
                 self.get_session_layers_helper(
                     &mut layer,
@@ -288,11 +338,12 @@ impl Engine {
     ) -> Result<()> {
         let start_time = layer_api.get_start_time(parent_layer_id)?;
 
+        let active_layer_id = self.context().layer_id();
         let layer_name = layer_api.get_name(parent_layer_id)?;
         let layer_status =
-            if parent_layer_id == self.active_layer_id && parent_layer_id == current_layer_id {
+            if parent_layer_id == active_layer_id && parent_layer_id == current_layer_id {
                 "[active/current] "
-            } else if parent_layer_id == self.active_layer_id {
+            } else if parent_layer_id == active_layer_id {
                 "[active] "
             } else if parent_layer_id == current_layer_id {
                 "[current] "
@@ -307,7 +358,7 @@ impl Engine {
             TimeFormat::VirtualTimeShort(start_time)
         );
 
-        let children = layer_api.get_layer_children(self.session_id, parent_layer_id)?;
+        let children = layer_api.get_layer_children(self.context.session_id(), parent_layer_id)?;
 
         // if children.is_empty() {
         //     builder.add_empty_child(layer_info);
@@ -327,24 +378,30 @@ impl Engine {
     pub fn select_layer(&mut self, layer_name: &LayerName) -> Result<()> {
         transaction! {
             self.storage_mgr => t {
-                let layer_id = t.layer().get_layer_id(self.session_id, layer_name)?;
+                let layer_id = t.layer().get_layer_id(self.context.session_id(), layer_name)?;
 
-                if self.active_layer_id != layer_id {
-                    self.active_layer_id = layer_id;
-
-                    self.request_simulation_info(&mut t)?;
-                }
+                self.select_layer_helper(layer_id)?;
             }
         }
 
         Ok(())
     }
 
+    fn select_layer_helper(&mut self, layer_id: LayerId) -> Result<()> {
+        self.wait_for_new_context = true;
+
+        self.spawn_context_change(
+            self.context.session_id(),
+            layer_id,
+            self.context().time_range().clone()
+        )
+    }
+
     pub fn get_session_name(&mut self) -> Result<SessionName> {
         let result;
         transaction! {
             self.storage_mgr => t {
-                result = t.session().get_name(self.session_id);
+                result = t.session().get_name(self.context.session_id());
             }
         }
 
@@ -363,13 +420,13 @@ impl Engine {
     }
 
     pub fn new_session(&mut self, session_name: Option<SessionName>) -> Result<()> {
-        self.new_session_helper(session_name, Some(self.session_id))
+        self.new_session_helper(session_name, Some(self.context.session_id()))
     }
 
     pub fn save_session(&mut self, session_name: SessionName) -> Result<()> {
         transaction! {
             self.storage_mgr => t {
-                t.session().save(self.session_id, &session_name)?;
+                t.session().save(self.context.session_id(), &session_name)?;
             }
         }
 
@@ -381,9 +438,13 @@ impl Engine {
             self.storage_mgr => t {
                 let mut session = t.session();
                 let (new_session_id, new_layer_id) = session.load(&session_name)?;
-                self.set_new_session(&mut session, new_session_id, new_layer_id, Some(self.session_id))?;
 
-                self.request_simulation_info(&mut t)?;
+                self.set_new_session(
+                    &mut session,
+                    new_session_id,
+                    new_layer_id,
+                    Some(self.context.session_id())
+                )?;
             }
         }
 
@@ -443,8 +504,97 @@ impl Engine {
             session.unlock(old_session_id)?;
         }
 
-        self.session_id = new_session_id;
-        self.active_layer_id = new_layer_id;
+        self.wait_for_new_context = true;
+
+        self.spawn_context_change(
+            new_session_id,
+            new_layer_id,
+            TimeRange::default()
+        )
+    }
+
+    fn spawn_context_change(
+        &mut self,
+        new_session_id: SessionId,
+        new_layer_id: LayerId,
+        mut new_time_range: TimeRange,
+    ) -> Result<()> {
+        if let Ok(_) = self.context_upd_intrp.send(()) {
+            trace! {
+                target: LOG_TARGET,
+                "interrupt context update"
+            }
+        }
+
+        let min_valid_start_time;
+        transaction! {
+            self.storage_mgr => t {
+                min_valid_start_time = t.location()
+                    .get_min_valid_start_time(new_layer_id, new_time_range.start())?;
+            }
+        }
+
+        if min_valid_start_time >= new_time_range.start() {
+            self.target_time_range = None;
+        } else {
+            self.target_time_range = Some(new_time_range);
+            new_time_range = TimeRange::with_default_len(min_valid_start_time);
+        }
+
+        let (ctx_sender, ctx_recv) = mpsc::channel();
+        let (ctx_upd_intrp_sender, ctx_upd_intrp_recv) = mpsc::channel();
+
+        self.context_recv = ctx_recv;
+        self.context_upd_intrp = ctx_upd_intrp_sender;
+
+        let storage_mgr = self.storage_mgr.clone();
+        let context = Arc::clone(&self.context);
+
+        rayon::spawn(move || {
+            let new_context = context.replicate(
+                new_session_id,
+                new_layer_id,
+                new_time_range
+            );
+
+            if let Ok(new_context) = new_context.update_content(
+                storage_mgr,
+                ctx_upd_intrp_recv
+            ) {
+                match ctx_sender.send(new_context) {
+                    Ok(_) => trace! {
+                        target: LOG_TARGET,
+                        "new context is sent"
+                    },
+                    Err(err) => error! {
+                        target: LOG_TARGET,
+                        "[context] {}", err
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    fn set_new_context(&mut self, mut context: Context) -> Result<()> {
+        self.scene.update(&mut context);
+
+        self.context = Arc::new(context);
+        self.wait_for_new_context = false;
+
+        trace! {
+            target: LOG_TARGET,
+            "context is changed"
+        }
+
+        if let Some(target_time_range) = self.target_time_range.take() {
+            self.spawn_context_change(
+                self.context.session_id(),
+                self.context.layer_id(),
+                target_time_range
+            )?;
+        }
 
         Ok(())
     }
@@ -461,18 +611,13 @@ impl Engine {
 
             transaction! {
                 self.storage_mgr => t {
-                    t.session().update_access_time(self.session_id)?;
+                    t.session().update_access_time(self.context.session_id())?;
                 }
             }
 
             self.last_session_update_time = self.real_time;
         }
 
-        Ok(())
-    }
-
-    fn request_simulation_info(&mut self, _transaction: &mut Transaction) -> Result<()> {
-        // TODO load from DB
         Ok(())
     }
 }
@@ -491,7 +636,7 @@ impl Drop for Engine {
         let mut session = storage::Session::new_api(&mut transaction);
 
         session
-            .unlock(self.session_id)
+            .unlock(self.context.session_id())
             .expect("the session is expected to be unlocked");
 
         transaction.commit().unwrap();

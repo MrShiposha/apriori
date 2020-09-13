@@ -51,10 +51,33 @@ CREATE OR REPLACE PROCEDURE {schema_name}.add_location(
     END
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION {schema_name}.is_objects_computed_at(
+-- CREATE OR REPLACE FUNCTION {schema_name}.is_objects_computed_at(
+--     active_layer_id integer,
+--     in_start_time bigint
+-- ) RETURNS boolean
+-- AS $$
+--     BEGIN
+--         RETURN (
+--             WITH active_objects AS (
+--                 SELECT object_id
+--                 FROM {schema_name}.object
+--                 INNER JOIN {schema_name}.layer_ancestors(active_layer_id) ancestors
+--                     ON layer_fk_id = ancestors.layer_id
+--             ) SELECT MIN(max_obj_time) >= in_start_time FROM (
+--                 SELECT MAX(t) as max_obj_time
+--                 FROM {schema_name}.location
+--                 INNER JOIN active_objects o
+--                     ON object_fk_id = o.object_id
+--                 GROUP BY object_fk_id
+--             ) AS is_min_obj_computed
+--         );
+--     END
+-- $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION {schema_name}.min_valid_start_time(
     active_layer_id integer,
-    in_start_time bigint
-) RETURNS boolean
+    requested_time bigint
+) RETURNS bigint
 AS $$
     BEGIN
         RETURN (
@@ -63,7 +86,7 @@ AS $$
                 FROM {schema_name}.object
                 INNER JOIN {schema_name}.layer_ancestors(active_layer_id) ancestors
                     ON layer_fk_id = ancestors.layer_id
-            ) SELECT MIN(max_obj_time) >= in_start_time FROM (
+            ) SELECT COALESCE(MIN(max_obj_time), requested_time) FROM (
                 SELECT MAX(t) as max_obj_time
                 FROM {schema_name}.location
                 INNER JOIN active_objects o
@@ -98,7 +121,7 @@ CREATE OR REPLACE FUNCTION {schema_name}.range_locations(
 AS $$
     BEGIN
         RETURN QUERY
-        SELECT DISTINCT ON (t)
+        SELECT DISTINCT ON (object_fk_id, t)
             location_id,
             object_fk_id,
             t, x, y, z, vx, vy, vz, vcx, vcy, vcz,
@@ -113,6 +136,6 @@ AS $$
             GROUP BY location_fk_id
         ) c_partners
             ON c_partners.location_fk_id = location_id
-        ORDER BY t, location_id DESC;
+        ORDER BY object_fk_id, t, location_id DESC;
     END
 $$ LANGUAGE plpgsql;

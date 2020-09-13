@@ -40,6 +40,7 @@ pub struct Object {
 
 impl Object {
     pub fn new(
+        layer_id: LayerId,
         name: ObjectName,
         radius: Distance,
         color: Color,
@@ -47,7 +48,7 @@ impl Object {
         compute_step: chrono::Duration
     ) -> Self {
         Self {
-            layer_id: LayerId::default(),
+            layer_id,
             name,
             radius,
             color,
@@ -121,53 +122,6 @@ impl<'o> Serialize for InitialObjectInfo<'o> {
     }
 }
 
-pub struct Entry(pub ObjectId, pub Object);
-
-impl<'de> Deserialize<'de> for Entry {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>
-    {
-        struct ObjectVisitor;
-
-        impl<'de> Visitor<'de> for ObjectVisitor {
-            type Value = Entry;
-
-            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "a session object")
-            }
-
-            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-                let object_id = seq.next_element()?.expect("expected object ID");
-
-                let layer_id = seq.next_element()?.expect("expected layer ID");
-                let name = seq.next_element()?.expect("expected name");
-                let radius = seq.next_element()?.expect("expected radius");
-
-                let color = seq.next_element()?.expect("expected color");
-                let color = graphics::unpack_color(&color);
-
-                let mass = seq.next_element()?.expect("expected mass");
-                let compute_step: RawTime = seq.next_element()?.expect("expected compute step");
-                let compute_step = compute_step.into_rust_duration();
-
-                let object = Object {
-                    layer_id,
-                    name,
-                    radius,
-                    color,
-                    mass,
-                    compute_step
-                };
-
-                Ok(Entry(object_id, object))
-            }
-        }
-
-        deserializer.deserialize_tuple(OBJECT_FIELDS_LEN, ObjectVisitor)
-    }
-}
-
 impl Hash for Object {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.name.hash(state);
@@ -190,13 +144,13 @@ impl Borrow<ObjectName> for Object {
 
 #[derive(Debug, Clone)]
 pub struct GenCoord {
-    time: RelativeTime,
+    time: chrono::Duration,
     location: Vector,
     velocity: Vector,
 }
 
 impl GenCoord {
-    pub fn new(time: RelativeTime, location: Vector, velocity: Vector) -> Self {
+    pub fn new(time: chrono::Duration, location: Vector, velocity: Vector) -> Self {
         Self {
             time,
             location,
@@ -204,8 +158,12 @@ impl GenCoord {
         }
     }
 
-    pub fn time(&self) -> RelativeTime {
+    pub fn time(&self) -> chrono::Duration {
         self.time
+    }
+
+    pub fn relative_time(&self) -> RelativeTime {
+        self.time.as_relative_time()
     }
 
     pub fn location(&self) -> &Vector {
@@ -229,7 +187,7 @@ impl Serialize for ObjectGenCoord {
         let ObjectGenCoord(object_id, coord) = self;
 
         tuple_seq.serialize_element(object_id)?;
-        tuple_seq.serialize_element(&coord.time.as_absolute_time().into_storage_duration())?;
+        tuple_seq.serialize_element(&coord.time.into_storage_duration())?;
         tuple_seq.serialize_element(&coord.location[0])?;
         tuple_seq.serialize_element(&coord.location[1])?;
         tuple_seq.serialize_element(&coord.location[2])?;
@@ -259,7 +217,7 @@ impl<'de> Deserialize<'de> for ObjectGenCoord {
                 let object_id = seq.next_element()?.expect("expected object ID");
 
                 let time: RawTime = seq.next_element()?.expect("expected time");
-                let time = time.into_rust_duration().as_relative_time();
+                let time = time.into_rust_duration();
 
                 let lx = seq.next_element()?.expect("expected x coord");
                 let ly = seq.next_element()?.expect("expected y coord");

@@ -2,15 +2,19 @@ use {
     lr_tree::*,
     crate::{
         object::{Object, GenCoord},
-        r#type::{ObjectId, Vector, Coord}
+        r#type::{ObjectId, Vector, Coord, AsRelativeTime, AsAbsoluteTime},
+        engine::context::{TimeRange, GlobalTrackPartId},
     },
-    std::mem::MaybeUninit,
+    std::{
+        sync::atomic::{AtomicUsize, Ordering},
+    }
 };
 
 pub type TrackPartId = NodeId;
 
 #[derive(Debug, Clone)]
 pub struct TrackPartInfo {
+    pub global_track_part_id: GlobalTrackPartId,
     pub start_location: Vector,
     pub end_location: Vector,
     pub start_velocity: Vector,
@@ -31,50 +35,79 @@ pub struct Actor {
     object: Object,
     track_parts_tree: TrackPartsTree,
     initial_location: Option<GenCoord>,
-    last_id: NodeId,
+    last_track_part_id: AtomicUsize,
 }
 
 impl Actor {
     pub fn new(
         object: Object,
         track_parts_space: TrackPartsSpace,
-        initial_location: Option<GenCoord>,
     ) -> Self {
         Self {
             object,
             track_parts_tree: TrackPartsTree::with_obj_space(track_parts_space),
-            initial_location,
-            last_id: NodeId::default(),
+            initial_location: None,
+            last_track_part_id: AtomicUsize::default(),
         }
+    }
+
+    pub fn object(&self) -> &Object {
+        &self.object
+    }
+
+    pub fn add_track_part_unchecked(
+        &self,
+        time_range: &TimeRange,
+        track_part_info: TrackPartInfo
+    ) -> TrackPartId {
+        let from = time_range.start().as_relative_time();
+        let to = time_range.end().as_relative_time();
+
+        let track_part_id = self.track_parts_tree
+            .lock_obj_space_write()
+            .make_data_node(
+                track_part_info,
+                mbr![t = [from; to]]
+            );
+
+        self.last_track_part_id.store(track_part_id, Ordering::SeqCst);
+
+        track_part_id
     }
 
     pub fn track_parts_tree(&self) -> &TrackPartsTree {
         &self.track_parts_tree
     }
 
-    pub fn last_gen_coord(&self) -> GenCoord {
-        let mut coord = MaybeUninit::<GenCoord>::uninit();
+    pub fn set_initial_location(&mut self, initial_location: GenCoord) {
+        self.initial_location = Some(initial_location);
+    }
 
-        self.track_parts_tree.access_object(
-            self.last_id,
-            |part_info, mbr| {
-                let t = mbr.bounds(0).max;
-                let location = part_info.end_location;
+    pub fn clear_initial_location(&mut self) {
+        self.initial_location = None;
+    }
 
-                let velocity = part_info.collision_info
-                    .as_ref()
-                    .map(|info| info.final_velocity)
-                    .unwrap_or(part_info.end_velocity);
+    pub fn last_gen_coord(&self) -> Option<GenCoord> {
+        let mut coord = self.initial_location.clone();
 
-                unsafe {
-                    coord.as_mut_ptr().write(GenCoord::new(t, location, velocity));
+        if coord.is_none() && !self.track_parts_tree.lock_obj_space().is_empty() {
+            self.track_parts_tree.access_object(
+                self.last_track_part_id.load(Ordering::SeqCst),
+                |part_info, mbr| {
+                    let t = mbr.bounds(0).max.as_absolute_time();
+                    let location = part_info.end_location;
+
+                    let velocity = part_info.collision_info
+                        .as_ref()
+                        .map(|info| info.final_velocity)
+                        .unwrap_or(part_info.end_velocity);
+
+                    coord = Some(GenCoord::new(t, location, velocity))
                 }
-            }
-        );
-
-        unsafe {
-            coord.assume_init()
+            );
         }
+
+        coord
     }
 }
 
@@ -84,25 +117,17 @@ impl Clone for Actor {
         let initial_location = self.initial_location.clone();
         let track_parts_space = self.track_parts_tree.lock_obj_space().clone_shrinked();
 
-        let is_space_empty = track_parts_space.is_empty();
-
         let new_tree = LRTree::with_obj_space(track_parts_space);
+        let alpha = 0.45;
+        new_tree.rebuild(alpha);
 
-        let last_id;
-        if initial_location.is_some() {
-            last_id = NodeId::default();
-        } else {
-            assert!(!is_space_empty);
-
-            let max_time = new_tree.lock_obj_space().get_root_mbr().bounds(0).max;
-            last_id = *new_tree.search(&mbr![t = [max_time; max_time]]).first().unwrap();
-        }
+        let last_track_part_id = self.last_track_part_id.load(Ordering::SeqCst);
 
         Actor {
             object,
             track_parts_tree: new_tree,
             initial_location,
-            last_id,
+            last_track_part_id: AtomicUsize::new(last_track_part_id),
         }
     }
 }

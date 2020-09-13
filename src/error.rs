@@ -1,6 +1,7 @@
 use super::{
     message,
-    r#type::{LayerName, ObjectName},
+    r#type::{LayerName, ObjectName, TimeFormat},
+    engine::context::TimeRange,
 };
 use std::fmt;
 
@@ -29,6 +30,8 @@ pub enum Error {
     Io(std::io::Error),
     ConnectionPool(r2d2::Error),
     Layer(Layer),
+    ContextUpdateInterrupted,
+    ObjectsNotComputed(TimeRange),
     MissingMessage,
     UnknownMessage(String),
     UnexpectedMessage(super::message::Message),
@@ -134,6 +137,14 @@ impl fmt::Display for Error {
             Error::Io(err) => write!(f, "[io] {}", err),
             Error::ConnectionPool(err) => write!(f, "[connection pool] {}", err),
             Error::Layer(err) => write!(f, "[layer] {}", err),
+            Error::ContextUpdateInterrupted => write!(f, "context update was interrupted"),
+            Error::ObjectsNotComputed(time_range) => {
+                write!(
+                    f, "some objects are not computed in the range [{}; {}]",
+                    TimeFormat::VirtualTimeShort(time_range.start()),
+                    TimeFormat::VirtualTimeShort(time_range.end())
+                )
+            }
             Error::MissingMessage => write!(f, "[missing message]"),
             Error::UnknownMessage(msg) => write!(f, "[unknown message] {}", msg),
             Error::UnexpectedMessage(msg) => {

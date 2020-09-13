@@ -7,7 +7,7 @@ use super::{
     logger::LOGGER,
     make_error,
     message::{self, Message},
-    r#type::{Color, RawTime, SessionInfo, TimeFormat, TimeUnit, AsRelativeTime, AsAbsoluteTime},
+    r#type::{Color, RawTime, SessionInfo, TimeFormat, TimeUnit, AsRelativeTime, AsAbsoluteTime, LayerId},
     shared_access, Error, Result, Shared,
 };
 use kiss3d::{
@@ -107,9 +107,9 @@ impl App {
         camera.rebind_left_key(Some(Key::A));
         camera.rebind_right_key(Some(Key::D));
 
-        // let scene = window.scene().clone();
-
-        let engine = Engine::init().expect("unable to initialize the engine");
+        let root_scene_node = window.scene().clone();
+        let engine = Engine::init(root_scene_node)
+            .expect("unable to initialize the engine");
 
         Self {
             window,
@@ -125,7 +125,7 @@ impl App {
         }
     }
 
-    pub fn run(&mut self, history: Option<PathBuf>) {
+    pub fn run(&mut self, history: Option<PathBuf>) -> Result<()> {
         let cli = cli::Observer::new(self.state.share(), history);
 
         loop {
@@ -153,13 +153,15 @@ impl App {
             self.process_console(&cli);
 
             let loop_end = epoch_offset_ns();
-            let loop_time = (loop_end - loop_begin) as RawTime;
+            let loop_time = loop_end - loop_begin;
 
-            let frame_delta_ns = loop_time as RawTime;
-            self.engine.advance_time(frame_delta_ns, advance_vtime);
+            let frame_delta_ns = loop_time;
+            self.engine.advance_time(frame_delta_ns, advance_vtime)?;
         }
 
         cli.join();
+
+        Ok(())
     }
 
     pub fn handle_message(&mut self, message: Message) -> Result<()> {
@@ -367,7 +369,7 @@ impl App {
 
         println!("--- creating new layer \"{}\" ---", layer_name);
 
-        self.new_layer = Some(Layer::new(layer_name, self.engine.session_id()));
+        self.new_layer = Some(Layer::new(layer_name, self.engine.context().session_id()));
         Ok(())
     }
 
@@ -418,6 +420,7 @@ impl App {
             let layer = self.new_layer.as_mut().unwrap();
 
             let object = Object::new(
+                LayerId::default(),
                 object_name,
                 msg.radius,
                 msg.color.unwrap_or(graphics::random_color()),
@@ -426,7 +429,7 @@ impl App {
             );
 
             let coord = GenCoord::new(
-                self.engine.virtual_time().as_relative_time(),
+                self.engine.virtual_time(),
                 msg.location,
                 msg.velocity
             );
@@ -560,7 +563,7 @@ impl App {
         match msg.time {
             Some(time) if state.is_run() => {
                 if time >= origin {
-                    self.engine.set_virtual_time(time);
+                    self.engine.set_virtual_time(time, false)?;
                 } else {
                     return Err(Error::VirtualTime(
                         "setting virtual time that lower than zero is forbidden".into(),
@@ -568,7 +571,7 @@ impl App {
                 }
             }
             None if state.is_run() && msg.origin => {
-                self.engine.set_virtual_time(chrono::Duration::zero())
+                self.engine.set_virtual_time(chrono::Duration::zero(), false)?;
             }
             None if !msg.origin => println!(
                 "{}",
@@ -689,15 +692,13 @@ impl App {
                 if matches![action, Action::Press] && shared_access![self.state].is_paused() =>
             {
                 let vtime = self.engine.virtual_time() - self.engine.virtual_step();
-                self.engine.set_virtual_time(vtime);
-                Ok(())
+                self.engine.set_virtual_time(vtime, true)
             }
             Key::Right
                 if matches![action, Action::Press] && shared_access![self.state].is_paused() =>
             {
                 let vtime = self.engine.virtual_time() + self.engine.virtual_step();
-                self.engine.set_virtual_time(vtime);
-                Ok(())
+                self.engine.set_virtual_time(vtime, true)
             }
             Key::C if modifiers.contains(Modifiers::Control) && matches![action, Action::Press] => {
                 self.close();
@@ -807,7 +808,7 @@ impl App {
 fn print_object_info(object: &Object, coord: &GenCoord) {
     println!();
     println!("\"{}\": {{", object.name());
-    println!("\ttime = {}", TimeFormat::VirtualTimeShort(coord.time().as_absolute_time()));
+    println!("\ttime = {}", TimeFormat::VirtualTimeShort(coord.time()));
 
     let location = coord.location();
     println!("\tlocation = {{{}, {}, {}}}", location[0], location[1], location[2]);
