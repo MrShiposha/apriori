@@ -20,6 +20,7 @@ use {
 pub mod context;
 pub mod actor;
 pub mod scene;
+pub mod math;
 mod util;
 
 use context::{Context, TimeRange};
@@ -109,6 +110,7 @@ impl Engine {
 
         if advance_virtual_time {
             self.virtual_time = self.virtual_time + chrono::Duration::nanoseconds(real_step);
+            self.scene.set_time(&self.context, self.virtual_time)?;
         }
 
         self.last_frame_delta = chrono::Duration::milliseconds((frame_delta_ns / ns_per_ms) as RawTime);
@@ -147,7 +149,7 @@ impl Engine {
         self.virtual_time = vtime;
 
         if try_current_context && self.context().time_range().contains(vtime) {
-            return Ok(());
+            return self.scene.set_time(self.context.as_ref(), vtime)
         }
 
         self.spawn_context_change(
@@ -578,7 +580,13 @@ impl Engine {
     }
 
     fn set_new_context(&mut self, mut context: Context) -> Result<()> {
+        if self.context.session_id() != context.session_id()
+        || self.context().layer_id() != context.layer_id() {
+            self.scene.clear();
+        }
+
         self.scene.update(&mut context);
+        self.scene.set_time(&context, self.virtual_time)?;
 
         self.context = Arc::new(context);
         self.wait_for_new_context = false;

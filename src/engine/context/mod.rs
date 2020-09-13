@@ -33,8 +33,8 @@ use crate::query;
 
 pub type ActorsMap = HashMap<ObjectId, Actor>;
 pub type ActorsNamesMap = HashMap<ObjectName, ObjectId>;
-pub type TracksSpace = ObjSpace<Coord, GlobalTrackPartInfo>;
-pub type TracksTree = LRTree<Coord, GlobalTrackPartInfo>;
+pub type GlobalTracksSpace = ObjSpace<Coord, GlobalTrackPartInfo>;
+pub type GlobalTracksTree = LRTree<Coord, GlobalTrackPartInfo>;
 pub type GlobalTrackPartId = NodeId;
 
 pub const GLOBAL_TREE_DIM: usize = 4;
@@ -55,7 +55,7 @@ pub struct Context {
     layer_id: LayerId,
     actors: ActorsMap,
     actors_names: ActorsNamesMap,
-    tracks_tree: TracksTree,
+    tracks_tree: GlobalTracksTree,
     time_range: TimeRange,
     new_objects: Vec<ObjectId>,
 }
@@ -75,12 +75,8 @@ impl Context {
             layer_id,
             actors: HashMap::new(),
             actors_names: HashMap::new(),
-            tracks_tree: TracksTree::with_obj_space(
-                TracksSpace::new(
-                    GLOBAL_TREE_DIM,
-                    TREE_MIN_RECS,
-                    TREE_MAX_RECS,
-                )
+            tracks_tree: GlobalTracksTree::with_obj_space(
+                Self::new_global_tracks_space()
             ),
             time_range,
             new_objects: vec![],
@@ -101,6 +97,10 @@ impl Context {
 
     pub fn actor(&self, id: ObjectId) -> &Actor {
         self.actors.get(&id).unwrap()
+    }
+
+    pub fn actors(&self) -> &ActorsMap {
+        &self.actors
     }
 
     pub fn take_new_object_id(&mut self) -> Option<ObjectId> {
@@ -134,7 +134,12 @@ impl Context {
             };
         }
 
-        if self.time_range.contains(new_time_range.start()) {
+        let session_id = self.session_id;
+        let layer_id = self.layer_id;
+        let actors_names = self.actors_names.clone();
+        let time_range = new_time_range;
+
+        if self.time_range.contains(time_range.start()) {
             info! {
                 target: LOG_TARGET,
                 "replicate the context with a new time range"
@@ -145,7 +150,7 @@ impl Context {
             self.tracks_tree.restore_removed();
 
             let from = self.time_range.start().as_relative_time();
-            let to = new_time_range.start().as_relative_time();
+            let to = time_range.start().as_relative_time();
 
             let remove_area = mbr![t = [from; to]];
 
@@ -155,18 +160,58 @@ impl Context {
             );
 
             self.actors.iter().for_each(|(_, actor)| {
+                // if another context is going to be created (in parallel) -
+                // restore all removed elements.
+                actor.track_parts_tree().restore_removed();
+
                 actor.track_parts_tree()
                     .retain(&remove_area, retain_predicate![to])
             });
 
-            self.clone()
+            let actors = self.actors.clone();
+
+            let tracks_space = self.tracks_tree.lock_obj_space().clone_shrinked();
+            let tracks_tree = GlobalTracksTree::with_obj_space(tracks_space);
+
+            Self {
+                session_id,
+                layer_id,
+                actors,
+                actors_names,
+                tracks_tree,
+                time_range,
+                new_objects: vec![],
+            }
         } else {
             info! {
                 target: LOG_TARGET,
                 "create a new context with a new time range"
             }
 
-            Self::with_time_range(self.session_id, self.layer_id, new_time_range)
+            let actors = self.actors.iter()
+                .map(|(id, actor)| {
+                    let actor = Actor::new(
+                        actor.object().clone(),
+                        Self::new_tracks_space()
+                    );
+
+                    (*id, actor)
+                })
+                .collect();
+
+            let tracks_tree = GlobalTracksTree::with_obj_space(
+                Self::new_global_tracks_space()
+            );
+
+            Self {
+                session_id,
+                layer_id,
+                actors,
+                actors_names,
+                tracks_tree,
+                time_range,
+                new_objects: vec![],
+            }
         }
     }
 
@@ -250,7 +295,7 @@ impl Context {
             let actor = self.actors.get_mut(&object_id).unwrap();
             match actor.last_gen_coord() {
                 Some(last_coord) => {
-                    actor.clear_initial_location();
+                    actor.set_last_location(make_gen_coord(&location_info));
 
                     let time_range = TimeRange::with_bounds(
                         last_coord.time(),
@@ -259,7 +304,6 @@ impl Context {
 
                     let location_id = location_info.location_id;
                     let collision_partners = location_info.collision_partners.clone();
-
                     let track_part_info = make_track_part_info(last_coord, location_info);
                     let global_mbr = make_global_mbr(
                         &time_range,
@@ -290,8 +334,8 @@ impl Context {
                     }
                 },
                 None => {
-                    let initial_location = make_gen_coord(location_info);
-                    actor.set_initial_location(initial_location);
+                    let initial_location = make_gen_coord(&location_info);
+                    actor.set_last_location(initial_location);
                 }
             }
         }
@@ -315,11 +359,7 @@ impl Context {
                 object_id,
                 Actor::new(
                     object,
-                    TrackPartsSpace::new(
-                        LOCAL_TREE_DIM,
-                        TREE_MIN_RECS,
-                        TREE_MAX_RECS
-                    )
+                    Self::new_tracks_space()
                 )
             );
         }
@@ -363,27 +403,20 @@ impl Context {
             actor.track_parts_tree().rebuild(alpha);
         }
     }
-}
 
-impl Clone for Context {
-    fn clone(&self) -> Self {
-        let session_id = self.session_id;
-        let layer_id = self.layer_id;
-        let actors = self.actors.clone();
-        let actors_names = self.actors_names.clone();
-        let time_range = self.time_range.clone();
+    fn new_tracks_space() -> TrackPartsSpace {
+        TrackPartsSpace::new(
+            LOCAL_TREE_DIM,
+            TREE_MIN_RECS,
+            TREE_MAX_RECS
+        )
+    }
 
-        let tracks_space = self.tracks_tree.lock_obj_space().clone_shrinked();
-        let tracks_tree = TracksTree::with_obj_space(tracks_space);
-
-        Self {
-            session_id,
-            layer_id,
-            actors,
-            actors_names,
-            tracks_tree,
-            time_range,
-            new_objects: vec![],
-        }
+    fn new_global_tracks_space() -> GlobalTracksSpace {
+        GlobalTracksSpace::new(
+            GLOBAL_TREE_DIM,
+            TREE_MIN_RECS,
+            TREE_MAX_RECS,
+        )
     }
 }

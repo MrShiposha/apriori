@@ -147,7 +147,7 @@ impl<'de> Deserialize<'de> for ObjectInfo {
     }
 }
 
-pub fn make_gen_coord(location_info: LocationInfo) -> GenCoord {
+pub fn make_gen_coord(location_info: &LocationInfo) -> GenCoord {
     let time = location_info.t;
     let location = Vector::new(
         location_info.x,

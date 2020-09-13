@@ -97,6 +97,34 @@ AS $$
     END
 $$ LANGUAGE plpgsql;
 
+CREATE OR REPLACE FUNCTION {schema_name}.query_object_layers_info(
+    active_layer_id integer,
+    object_id bigint,
+    in_start_time bigint,
+    in_stop_time bigint
+) RETURNS TABLE (
+    layer_id integer,
+    layer_start_time bigint,
+    layer_stop_time bigint
+) AS $$
+    BEGIN
+        RETURN QUERY
+        SELECT
+            temp_layer_id as layer_id,
+            GREATEST(temp_start_time, in_start_time) AS start_time,
+            LEAST(lead(temp_start_time) OVER (ORDER BY temp_layer_id ASC), in_stop_time) AS stop_time
+        FROM (
+            SELECT
+                layer_fk_id as temp_layer_id, MIN(t) as temp_start_time
+            FROM {schema_name}.location
+            INNER JOIN {schema_name}.layer_ancestors(active_layer_id) ancestors
+                ON layer_fk_id = ancestors.layer_id
+            WHERE object_fk_id = object_id
+            GROUP BY layer_fk_id
+        ) as start_times;
+    END
+$$ LANGUAGE plpgsql;
+
 CREATE OR REPLACE FUNCTION {schema_name}.range_locations(
     active_layer_id integer,
     in_start_time bigint,
@@ -127,7 +155,8 @@ AS $$
             t, x, y, z, vx, vy, vz, vcx, vcy, vcz,
             COALESCE(c_partners.partners_array, '{{}}')
         FROM {schema_name}.location
-        INNER JOIN {schema_name}.query_layers_info(active_layer_id, in_start_time, in_stop_time) layers_info
+        -- INNER JOIN {schema_name}.query_layers_info(active_layer_id, in_start_time, in_stop_time) layers_info
+        INNER JOIN {schema_name}.query_object_layers_info(active_layer_id, object_fk_id, in_start_time, in_stop_time) layers_info
             ON layer_fk_id = layers_info.layer_id
             AND t BETWEEN layers_info.layer_start_time AND layers_info.layer_stop_time
         LEFT OUTER JOIN (

@@ -1,5 +1,5 @@
 use {
-    super::r#type::{Distance, RelativeTime, Vector},
+    crate::r#type::{Distance, RelativeTime, Vector},
     std::ops::Range,
 };
 

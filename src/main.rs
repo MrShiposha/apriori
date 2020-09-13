@@ -8,7 +8,6 @@ mod graphics;
 mod layer;
 mod object;
 mod logger;
-mod math;
 mod message;
 mod storage;
 mod r#type;
