@@ -26,6 +26,7 @@ impl Scene {
             let actor = new_context.actor(id);
 
             let radius = actor.object().radius();
+            let color = actor.object().color();
             let last_location = actor.last_gen_coord()
                 .unwrap()
                 .location()
@@ -38,6 +39,7 @@ impl Scene {
 
             let mut sphere = self.root.add_sphere(radius);
             sphere.set_local_translation(translation);
+            sphere.set_color(color[0], color[1], color[2]);
 
             self.objects_map.insert(id, sphere);
         }

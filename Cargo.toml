@@ -4,11 +4,9 @@ version = "0.1.0"
 authors = ["Daniel Shiposha <shipdan@yandex.ru>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 kiss3d = "0.25.0"
-nalgebra = "*"
+nalgebra = "0.22.0"
 structopt = "0.3.13"
 lazy_static = "1.4.0"
 css-color-parser = "0.1.2"

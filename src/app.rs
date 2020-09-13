@@ -100,6 +100,7 @@ impl App {
             },
         );
         window.set_light(Light::StickToCamera);
+        window.set_framerate_limit(Some(40));
 
         let mut camera = FirstPerson::new(Point3::new(0.0, 0.0, -10.0), Point3::origin());
         camera.rebind_up_key(Some(Key::W));

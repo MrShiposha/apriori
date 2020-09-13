@@ -29,9 +29,9 @@ pub fn pack_color(color: &Color) -> PackedColor {
 pub fn unpack_color(color: &PackedColor) -> Color {
     let channel_bits = 8 * std::mem::size_of::<u8>();
 
-    let r = ((color >> 2*channel_bits) & 0xFF) as ColorChannel;
+    let r = (color & 0xFF) as ColorChannel;
     let g = ((color >> channel_bits) & 0xFF) as ColorChannel;
-    let b = (color & 0xFF) as ColorChannel;
+    let b = ((color >> 2*channel_bits) & 0xFF) as ColorChannel;
 
     Color::new(r, g, b) / std::u8::MAX as f32
 }
