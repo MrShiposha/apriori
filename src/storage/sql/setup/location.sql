@@ -107,12 +107,18 @@ CREATE OR REPLACE FUNCTION {schema_name}.query_object_layers_info(
     layer_start_time bigint,
     layer_stop_time bigint
 ) AS $$
+    DECLARE
+        obj_compute_step bigint;
     BEGIN
+        SELECT 2*compute_step
+        FROM {schema_name}.object
+        INTO obj_compute_step;
+
         RETURN QUERY
         SELECT
             temp_layer_id as layer_id,
-            GREATEST(temp_start_time, in_start_time) AS start_time,
-            LEAST(lead(temp_start_time) OVER (ORDER BY temp_layer_id ASC), in_stop_time) AS stop_time
+            GREATEST(temp_start_time, in_start_time - obj_compute_step) AS start_time,
+            LEAST(lead(temp_start_time) OVER (ORDER BY temp_layer_id ASC), in_stop_time + obj_compute_step) AS stop_time
         FROM (
             SELECT
                 layer_fk_id as temp_layer_id, MIN(t) as temp_start_time

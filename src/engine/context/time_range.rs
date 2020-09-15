@@ -1,3 +1,5 @@
+use crate::r#type::AsRelativeTime;
+
 #[derive(Debug, Clone)]
 pub struct TimeRange {
     start: chrono::Duration,
@@ -40,6 +42,10 @@ impl TimeRange {
 
     pub fn offset(&self, vtime: chrono::Duration) -> chrono::Duration {
         vtime - self.start
+    }
+
+    pub fn ratio(&self, vtime: chrono::Duration) -> f32 {
+        self.offset(vtime).as_relative_time() / self.length().as_relative_time()
     }
 
     pub fn contains(&self, vtime: chrono::Duration) -> bool {

@@ -29,6 +29,8 @@ use scene::Scene;
 const CONNECTION_STRING: &'static str = "host=localhost user=postgres";
 const LOG_TARGET: &'static str = "engine";
 
+const CONTEXT_CHANGE_RATIO: f32 = 0.75;
+
 lazy_static! {
     static ref ACCESS_UPDATE_TIME: chrono::Duration = chrono::Duration::seconds(30);
     pub static ref SESSION_MAX_HANG_TIME: chrono::Duration =
@@ -111,6 +113,14 @@ impl Engine {
         if advance_virtual_time {
             self.virtual_time = self.virtual_time + chrono::Duration::nanoseconds(real_step);
             self.scene.set_time(&self.context, self.virtual_time)?;
+
+            if self.context().time_range().ratio(self.virtual_time) >= CONTEXT_CHANGE_RATIO {
+                self.spawn_context_change(
+                    self.context().session_id(),
+                    self.context().layer_id(),
+                    TimeRange::with_default_len(self.virtual_time)
+                )?;
+            }
         }
 
         self.last_frame_delta = chrono::Duration::milliseconds((frame_delta_ns / ns_per_ms) as RawTime);
