@@ -1,28 +1,20 @@
 use {
     crate::{
+        graphics,
         r#type::{
-            SessionId,
-            LayerId,
-            ObjectId,
-            ObjectName,
-            Distance,
-            Color,
-            Mass,
-            IntoRustDuration,
-            IntoStorageDuration,
-            RelativeTime,
-            AsRelativeTime,
-            AsAbsoluteTime,
-            RawTime,
-            Vector,
+            Color, Distance, IntoRustDuration, IntoStorageDuration, LayerId, Mass, ObjectId,
+            ObjectName, RawTime, SessionId, Vector,
         },
-        graphics
+    },
+    serde::{
+        de::{SeqAccess, Visitor},
+        ser::SerializeTuple,
+        Deserialize, Deserializer, Serialize, Serializer,
     },
     std::{
-        hash::{Hash, Hasher},
         borrow::Borrow,
+        hash::{Hash, Hasher},
     },
-    serde::{Serialize, Serializer, Deserialize, Deserializer, ser::SerializeTuple, de::{Visitor, SeqAccess}}
 };
 
 const OBJECT_FIELDS_LEN: usize = 6;
@@ -45,7 +37,7 @@ impl Object {
         radius: Distance,
         color: Color,
         mass: Mass,
-        compute_step: chrono::Duration
+        compute_step: chrono::Duration,
     ) -> Self {
         Self {
             layer_id,
@@ -53,7 +45,7 @@ impl Object {
             radius,
             color,
             mass,
-            compute_step
+            compute_step,
         }
     }
 
@@ -100,13 +92,9 @@ pub struct InitialObjectInfo<'o>(pub SessionId, pub LayerId, pub &'o Object);
 impl<'o> Serialize for InitialObjectInfo<'o> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: Serializer
+        S: Serializer,
     {
-        let InitialObjectInfo(
-            session_id,
-            layer_id,
-            object
-        ) = self;
+        let InitialObjectInfo(session_id, layer_id, object) = self;
 
         let mut tuple_seq = serializer.serialize_tuple(OBJECT_FIELDS_LEN)?;
 
@@ -154,16 +142,12 @@ impl GenCoord {
         Self {
             time,
             location,
-            velocity
+            velocity,
         }
     }
 
     pub fn time(&self) -> chrono::Duration {
         self.time
-    }
-
-    pub fn relative_time(&self) -> RelativeTime {
-        self.time.as_relative_time()
     }
 
     pub fn location(&self) -> &Vector {
@@ -180,7 +164,7 @@ pub struct ObjectGenCoord(pub ObjectId, pub GenCoord);
 impl Serialize for ObjectGenCoord {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: Serializer
+        S: Serializer,
     {
         let mut tuple_seq = serializer.serialize_tuple(GEN_COORD_FIELDS_LEN)?;
 
@@ -202,7 +186,7 @@ impl Serialize for ObjectGenCoord {
 impl<'de> Deserialize<'de> for ObjectGenCoord {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: Deserializer<'de>
+        D: Deserializer<'de>,
     {
         struct ObjectGenCoordVisitor;
 
@@ -227,11 +211,7 @@ impl<'de> Deserialize<'de> for ObjectGenCoord {
                 let vy = seq.next_element()?.expect("expected x velocity coord");
                 let vz = seq.next_element()?.expect("expected x velocity coord");
 
-                let coord = GenCoord::new(
-                    time,
-                    Vector::new(lx, ly, lz),
-                    Vector::new(vx, vy, vz)
-                );
+                let coord = GenCoord::new(time, Vector::new(lx, ly, lz), Vector::new(vx, vy, vz));
 
                 Ok(ObjectGenCoord(object_id, coord))
             }

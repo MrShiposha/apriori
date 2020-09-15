@@ -48,9 +48,7 @@ impl Observer {
             message_loop(app_state, editor, sender);
         });
 
-        Self {
-            recv: receiver,
-        }
+        Self { recv: receiver }
     }
 
     pub fn try_recv(&self) -> std::result::Result<Message, mpsc::TryRecvError> {

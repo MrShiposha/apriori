@@ -1,4 +1,5 @@
 use super::{make_error, Error, Result};
+use lr_tree::{mbr, MBR};
 use nalgebra::{Point3, Vector3};
 use phf::phf_map;
 use std::fmt;
@@ -50,6 +51,18 @@ pub trait AsAbsoluteTime {
 impl AsAbsoluteTime for RelativeTime {
     fn as_absolute_time(&self) -> chrono::Duration {
         chrono::Duration::milliseconds((*self * 1000.0) as RawTime)
+    }
+}
+
+pub trait AsTimeMBR {
+    fn as_mbr(&self) -> MBR<Coord>;
+}
+
+impl AsTimeMBR for chrono::Duration {
+    fn as_mbr(&self) -> MBR<Coord> {
+        let t = self.as_relative_time();
+
+        mbr![t = [t; t]]
     }
 }
 

@@ -1,27 +1,24 @@
 use {
-    std::sync::{
-        Arc,
-        mpsc,
-    },
     crate::{
-        Result,
-        Error,
         layer::Layer,
-        r#type::{LayerId, LayerName, ObjectName, RawTime, SessionId, SessionInfo, SessionName, TimeFormat},
+        r#type::{
+            LayerId, LayerName, ObjectName, RawTime, SessionId, SessionInfo, SessionName,
+            TimeFormat,
+        },
         storage::{self, StorageManager, StorageTransaction},
-        transaction,
+        transaction, Error, Result,
     },
+    kiss3d::scene::SceneNode,
     lazy_static::lazy_static,
     log::{error, trace, warn},
     ptree::{item::StringItem, TreeBuilder},
-    kiss3d::scene::SceneNode
+    std::sync::{mpsc, Arc},
 };
 
-pub mod context;
 pub mod actor;
-pub mod scene;
+pub mod context;
 pub mod math;
-mod util;
+pub mod scene;
 
 use context::{Context, TimeRange};
 use scene::Scene;
@@ -56,10 +53,7 @@ pub struct Engine {
 
 impl Engine {
     pub fn init(root_scene_node: SceneNode) -> Result<Self> {
-        let storage_mgr = StorageManager::setup(
-            CONNECTION_STRING,
-            *SESSION_MAX_HANG_TIME
-        )?;
+        let storage_mgr = StorageManager::setup(CONNECTION_STRING, *SESSION_MAX_HANG_TIME)?;
         let (_, context_recv) = mpsc::channel();
         let (context_upd_intrp, _) = mpsc::channel();
 
@@ -96,11 +90,13 @@ impl Engine {
                     "waiting for a new context"
                 }
 
-                let new_context = self.context_recv.recv()
+                let new_context = self
+                    .context_recv
+                    .recv()
                     .map_err(|_| Error::ContextUpdateInterrupted)?;
 
                 self.set_new_context(new_context)?;
-            },
+            }
             _ => {}
         }
 
@@ -112,18 +108,19 @@ impl Engine {
 
         if advance_virtual_time {
             self.virtual_time = self.virtual_time + chrono::Duration::nanoseconds(real_step);
-            self.scene.set_time(&self.context, self.virtual_time)?;
+            self.scene.set_time(&self.context, self.virtual_time);
 
             if self.context().time_range().ratio(self.virtual_time) >= CONTEXT_CHANGE_RATIO {
                 self.spawn_context_change(
                     self.context().session_id(),
                     self.context().layer_id(),
-                    TimeRange::with_default_len(self.virtual_time)
+                    TimeRange::with_default_len(self.virtual_time),
                 )?;
             }
         }
 
-        self.last_frame_delta = chrono::Duration::milliseconds((frame_delta_ns / ns_per_ms) as RawTime);
+        self.last_frame_delta =
+            chrono::Duration::milliseconds((frame_delta_ns / ns_per_ms) as RawTime);
         self.real_time = self.real_time + self.last_frame_delta;
 
         self.frames_sum_time_ms += (frame_delta_ns / ns_per_ms) as usize;
@@ -153,19 +150,21 @@ impl Engine {
     pub fn set_virtual_time(
         &mut self,
         vtime: chrono::Duration,
-        try_current_context: bool
+        try_current_context: bool,
     ) -> Result<()> {
         self.wait_for_new_context = true;
         self.virtual_time = vtime;
 
         if try_current_context && self.context().time_range().contains(vtime) {
-            return self.scene.set_time(self.context.as_ref(), vtime)
+            self.scene.set_time(self.context.as_ref(), vtime);
+
+            return Ok(());
         }
 
         self.spawn_context_change(
             self.context().session_id(),
             self.context().layer_id(),
-            TimeRange::with_default_len(vtime)
+            TimeRange::with_default_len(vtime),
         )
     }
 
@@ -375,13 +374,13 @@ impl Engine {
         // if children.is_empty() {
         //     builder.add_empty_child(layer_info);
         // } else {
-            builder.begin_child(layer_info);
+        builder.begin_child(layer_info);
 
-            for &child_id in children.iter() {
-                self.get_session_layers_helper(layer_api, builder, current_layer_id, child_id)?;
-            }
+        for &child_id in children.iter() {
+            self.get_session_layers_helper(layer_api, builder, current_layer_id, child_id)?;
+        }
 
-            builder.end_child();
+        builder.end_child();
         // }
 
         Ok(())
@@ -405,7 +404,7 @@ impl Engine {
         self.spawn_context_change(
             self.context.session_id(),
             layer_id,
-            self.context().time_range().clone()
+            self.context().time_range().clone(),
         )
     }
 
@@ -518,11 +517,7 @@ impl Engine {
 
         self.wait_for_new_context = true;
 
-        self.spawn_context_change(
-            new_session_id,
-            new_layer_id,
-            TimeRange::default()
-        )
+        self.spawn_context_change(new_session_id, new_layer_id, TimeRange::default())
     }
 
     fn spawn_context_change(
@@ -563,16 +558,9 @@ impl Engine {
         let context = Arc::clone(&self.context);
 
         rayon::spawn(move || {
-            let new_context = context.replicate(
-                new_session_id,
-                new_layer_id,
-                new_time_range
-            );
+            let new_context = context.replicate(new_session_id, new_layer_id, new_time_range);
 
-            if let Ok(new_context) = new_context.update_content(
-                storage_mgr,
-                ctx_upd_intrp_recv
-            ) {
+            if let Ok(new_context) = new_context.update_content(storage_mgr, ctx_upd_intrp_recv) {
                 match ctx_sender.send(new_context) {
                     Ok(_) => trace! {
                         target: LOG_TARGET,
@@ -581,7 +569,7 @@ impl Engine {
                     Err(err) => error! {
                         target: LOG_TARGET,
                         "[context] {}", err
-                    }
+                    },
                 }
             }
         });
@@ -591,12 +579,13 @@ impl Engine {
 
     fn set_new_context(&mut self, mut context: Context) -> Result<()> {
         if self.context.session_id() != context.session_id()
-        || self.context().layer_id() != context.layer_id() {
+            || self.context().layer_id() != context.layer_id()
+        {
             self.scene.clear();
         }
 
         self.scene.update(&mut context);
-        self.scene.set_time(&context, self.virtual_time)?;
+        self.scene.set_time(&context, self.virtual_time);
 
         self.context = Arc::new(context);
         self.wait_for_new_context = false;
@@ -610,7 +599,7 @@ impl Engine {
             self.spawn_context_change(
                 self.context.session_id(),
                 self.context.layer_id(),
-                target_time_range
+                target_time_range,
             )?;
         }
 

@@ -1,7 +1,7 @@
 use super::{
-    message,
-    r#type::{LayerName, ObjectName, TimeFormat, Vector},
     engine::context::TimeRange,
+    message,
+    r#type::{LayerName, ObjectName, TimeFormat},
 };
 use std::fmt;
 
@@ -43,7 +43,6 @@ pub enum Error {
     Storage(Storage),
     SerializeCSV(csv::Error),
     WriterCSV(String),
-    Interpolation(Interpolation)
 }
 
 #[derive(Debug)]
@@ -53,13 +52,6 @@ pub enum Layer {
     ObjectNotFound(ObjectName),
     ObjectAlreadyAdded(ObjectName),
     ObjectAlreadyExists(ObjectName),
-}
-
-#[derive(Debug)]
-pub enum Interpolation {
-    FutureObject,
-    ObjectIsNotComputed(Vector),
-    NoTrackParts,
 }
 
 #[derive(Debug)]
@@ -145,15 +137,13 @@ impl fmt::Display for Error {
             Error::Io(err) => write!(f, "[io] {}", err),
             Error::ConnectionPool(err) => write!(f, "[connection pool] {}", err),
             Error::Layer(err) => write!(f, "[layer] {}", err),
-            Error::Interpolation(err) => write!(f, "[interpolation]: {}", err),
             Error::ContextUpdateInterrupted => write!(f, "context update was interrupted"),
-            Error::ObjectsNotComputed(time_range) => {
-                write!(
-                    f, "some objects are not computed in the range [{}; {}]",
-                    TimeFormat::VirtualTimeShort(time_range.start()),
-                    TimeFormat::VirtualTimeShort(time_range.end())
-                )
-            }
+            Error::ObjectsNotComputed(time_range) => write!(
+                f,
+                "some objects are not computed in the range [{}; {}]",
+                TimeFormat::VirtualTimeShort(time_range.start()),
+                TimeFormat::VirtualTimeShort(time_range.end())
+            ),
             Error::MissingMessage => write!(f, "[missing message]"),
             Error::UnknownMessage(msg) => write!(f, "[unknown message] {}", msg),
             Error::UnexpectedMessage(msg) => {
@@ -205,24 +195,16 @@ impl fmt::Display for Layer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::LayerAlreadyExists(name) => write!(f, "layer \"{}\" already exists", name),
-            Self::ObjectNotFound(name) => write!(f, "object \"{}\" is not found in the layer", name),
+            Self::ObjectNotFound(name) => {
+                write!(f, "object \"{}\" is not found in the layer", name)
+            }
             Self::LayerNotFound(name) => write!(f, "layer \"{}\" is not found", name),
-            Self::ObjectAlreadyAdded(name) => write!(f, "object \"{}\" already added into the layer", name),
-            Self::ObjectAlreadyExists(name) => write!(f, "pbject \"{}\" alredy exists in the session", name),
-        }
-    }
-}
-
-impl fmt::Display for Interpolation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::FutureObject => write!(f, "object has not appeared yet"),
-            Self::ObjectIsNotComputed(vector) => write!(
-                f,
-                "object is not yet computed, last computed location: {{{}, {}, {}}}",
-                vector[0], vector[1], vector[2],
-            ),
-            Self::NoTrackParts => write!(f, "object has no track parts"),
+            Self::ObjectAlreadyAdded(name) => {
+                write!(f, "object \"{}\" already added into the layer", name)
+            }
+            Self::ObjectAlreadyExists(name) => {
+                write!(f, "pbject \"{}\" alredy exists in the session", name)
+            }
         }
     }
 }

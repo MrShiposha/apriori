@@ -1,9 +1,6 @@
 use crate::{
-    graphics,
-    object,
-    r#type::{SessionId, LayerId, ObjectId, ObjectName, IntoStorageDuration},
-    map_err,
-    query,
+    graphics, map_err, object, query,
+    r#type::{IntoStorageDuration, LayerId, ObjectId, ObjectName, SessionId},
     Result,
 };
 use postgres::Transaction;
@@ -50,11 +47,15 @@ impl<'t, 'storage> Object<'t, 'storage> {
             .map_err(map_err!(Error::Storage::Object))
     }
 
-    pub fn is_object_exists(&mut self, session_id: SessionId, object_name: &ObjectName) -> Result<bool> {
+    pub fn is_object_exists(
+        &mut self,
+        session_id: SessionId,
+        object_name: &ObjectName,
+    ) -> Result<bool> {
         self.transaction
             .query_one(
                 query!["SELECT {schema_name}.is_object_exists($1, $2)"],
-                &[&session_id, object_name]
+                &[&session_id, object_name],
             )
             .map(|row| row.get(0))
             .map_err(map_err!(Error::Storage::Object))

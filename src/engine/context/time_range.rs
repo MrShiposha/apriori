@@ -16,10 +16,7 @@ impl TimeRange {
     pub fn with_bounds(start: chrono::Duration, end: chrono::Duration) -> Self {
         assert!(start < end);
 
-        Self {
-            start,
-            end
-        }
+        Self { start, end }
     }
 
     pub fn with_default_len(start: chrono::Duration) -> Self {

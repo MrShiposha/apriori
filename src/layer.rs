@@ -1,11 +1,11 @@
 use {
     crate::{
-        Result,
         make_error,
-        r#type::{SessionId, LayerName, ObjectName},
-        object::{Object, GenCoord},
+        object::{GenCoord, Object},
+        r#type::{LayerName, ObjectName, SessionId},
+        Result,
     },
-    std::collections::{HashMap, hash_map::Entry},
+    std::collections::{hash_map::Entry, HashMap},
 };
 
 #[derive(Debug)]
@@ -20,7 +20,7 @@ impl Layer {
         Self {
             name,
             session_id,
-            objects_info: HashMap::new()
+            objects_info: HashMap::new(),
         }
     }
 
@@ -33,10 +33,10 @@ impl Layer {
             Entry::Vacant(entry) => {
                 entry.insert(coord);
                 Ok(())
-            },
-            Entry::Occupied(entry) => {
-                Err(make_error!(Error::Layer::ObjectAlreadyAdded(entry.key().name().clone())))
             }
+            Entry::Occupied(entry) => Err(make_error!(Error::Layer::ObjectAlreadyAdded(
+                entry.key().name().clone()
+            ))),
         }
 
         // match self.objects.get(object.name()) {
@@ -52,11 +52,11 @@ impl Layer {
         self.objects_info.get_key_value(object_name)
     }
 
-    pub fn iter_objects(&self) -> impl Iterator<Item=(&Object, &GenCoord)> {
+    pub fn iter_objects(&self) -> impl Iterator<Item = (&Object, &GenCoord)> {
         self.objects_info.iter()
     }
 
-    pub fn take_objects(self) -> impl Iterator<Item=(Object, GenCoord)> {
+    pub fn take_objects(self) -> impl Iterator<Item = (Object, GenCoord)> {
         self.objects_info.into_iter()
     }
 }

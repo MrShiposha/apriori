@@ -1,8 +1,9 @@
 use crate::{
-    query,
+    map_err,
     object::GenCoord,
-    r#type::{RawTime, IntoStorageDuration, IntoRustDuration, LayerId, ObjectId},
-    map_err, Result,
+    query,
+    r#type::{IntoRustDuration, IntoStorageDuration, LayerId, ObjectId, RawTime},
+    Result,
 };
 use postgres::Transaction;
 
@@ -32,7 +33,7 @@ impl<'t, 'storage> Location<'t, 'storage> {
                     &velocity[0],
                     &velocity[1],
                     &velocity[2],
-                ]
+                ],
             )
             .map(|_| {})
             .map_err(map_err!(Error::Storage::Location))
@@ -41,12 +42,12 @@ impl<'t, 'storage> Location<'t, 'storage> {
     pub fn get_min_valid_start_time(
         &mut self,
         layer_id: LayerId,
-        requested_time: chrono::Duration
+        requested_time: chrono::Duration,
     ) -> Result<chrono::Duration> {
         self.transaction
             .query_one(
                 query!["SELECT {schema_name}.min_valid_start_time($1, $2)"],
-                &[&layer_id, &requested_time.into_storage_duration()]
+                &[&layer_id, &requested_time.into_storage_duration()],
             )
             .map(|row| {
                 let time: RawTime = row.get(0);

@@ -1,7 +1,7 @@
 use crate::{
-    make_error, query,
+    make_error, map_err, query,
     r#type::{IntoRustDuration, IntoStorageDuration, LayerId, LayerName, RawTime, SessionId},
-    map_err, Result,
+    Result,
 };
 use postgres::Transaction;
 

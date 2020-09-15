@@ -31,7 +31,7 @@ pub fn unpack_color(color: &PackedColor) -> Color {
 
     let r = (color & 0xFF) as ColorChannel;
     let g = ((color >> channel_bits) & 0xFF) as ColorChannel;
-    let b = ((color >> 2*channel_bits) & 0xFF) as ColorChannel;
+    let b = ((color >> 2 * channel_bits) & 0xFF) as ColorChannel;
 
     Color::new(r, g, b) / std::u8::MAX as f32
 }

@@ -1,9 +1,6 @@
-use {
-    crate::{
-        messages,
-        cli,
-        r#type::{ObjectName, Vector, Color, Distance, Mass},
-    },
+use crate::{
+    cli, messages,
+    r#type::{Color, Distance, Mass, ObjectName, Vector},
 };
 
 messages! {

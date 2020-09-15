@@ -15,14 +15,14 @@ use {
 };
 
 pub mod layer;
-pub mod session;
-pub mod object;
 pub mod location;
+pub mod object;
+pub mod session;
 
 pub use layer::Layer;
-pub use session::Session;
-pub use object::Object;
 pub use location::Location;
+pub use object::Object;
+pub use session::Session;
 
 #[macro_export]
 macro_rules! map_err {
@@ -131,7 +131,6 @@ pub trait StorageTransaction<'storage> {
     fn object<'t>(&'t mut self) -> object::Object<'t, 'storage>;
 
     fn location<'t>(&'t mut self) -> location::Location<'t, 'storage>;
-
 }
 
 impl<'storage> StorageTransaction<'storage> for Transaction<'storage> {

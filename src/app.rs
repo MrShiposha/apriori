@@ -1,13 +1,12 @@
 use super::{
     cli,
     engine::Engine,
-    layer,
-    object,
-    graphics,
+    graphics, layer,
     logger::LOGGER,
     make_error,
     message::{self, Message},
-    r#type::{Color, SessionInfo, TimeFormat, TimeUnit, LayerId},
+    object,
+    r#type::{Color, LayerId, SessionInfo, TimeFormat, TimeUnit},
     shared_access, Error, Result, Shared,
 };
 use kiss3d::{
@@ -19,9 +18,9 @@ use kiss3d::{
     window::{CanvasSetup, NumSamples, Window},
 };
 use layer::Layer;
-use object::{Object, GenCoord};
 use log::{error, info};
 use nalgebra::{Point2, Point3 /*Vector2*/};
+use object::{GenCoord, Object};
 use ptree;
 use std::{
     fmt::{self, Write},
@@ -100,8 +99,7 @@ impl App {
         camera.rebind_right_key(Some(Key::D));
 
         let root_scene_node = window.scene().clone();
-        let engine = Engine::init(root_scene_node)
-            .expect("unable to initialize the engine");
+        let engine = Engine::init(root_scene_node).expect("unable to initialize the engine");
 
         Self {
             window,
@@ -113,7 +111,7 @@ impl App {
             is_names_displayed: false,
             is_tracks_displayed: false,
             track_step: chrono::Duration::milliseconds(500),
-            new_default_obj_index: 0
+            new_default_obj_index: 0,
         }
     }
 
@@ -133,7 +131,7 @@ impl App {
                     advance_vtime = true;
                 }
                 State::Paused => advance_vtime = false,
-                State::Completed => break
+                State::Completed => break,
             }
 
             self.render_frame();
@@ -164,11 +162,9 @@ impl App {
         use message::layer::Message as LayerMsg;
 
         match msg {
-            Message::Layer(layer_msg) => {
-                match layer_msg {
-                    LayerMsg::AddObject(msg) => self.add_object_into_layer(msg),
-                }
-            }
+            Message::Layer(layer_msg) => match layer_msg {
+                LayerMsg::AddObject(msg) => self.add_object_into_layer(msg),
+            },
             Message::Submit(_) => self.submit_layer(),
             Message::Cancel(_) => {
                 let layer = self.new_layer.take().unwrap();
@@ -181,7 +177,8 @@ impl App {
             Message::ObjectInfo(msg) => {
                 let layer = self.new_layer.as_ref().unwrap();
 
-                let (object, coord) = layer.get_object(&msg.name)
+                let (object, coord) = layer
+                    .get_object(&msg.name)
                     .ok_or(make_error![Error::Layer::ObjectNotFound(msg.name)])?;
 
                 print_object_info(object, coord);
@@ -411,14 +408,10 @@ impl App {
                 msg.radius,
                 msg.color.unwrap_or(graphics::random_color()),
                 msg.mass,
-                msg.step
+                msg.step,
             );
 
-            let coord = GenCoord::new(
-                self.engine.virtual_time(),
-                msg.location,
-                msg.velocity
-            );
+            let coord = GenCoord::new(self.engine.virtual_time(), msg.location, msg.velocity);
 
             layer.add_object(object, coord)
         }
@@ -551,7 +544,8 @@ impl App {
                 }
             }
             None if state.is_run() && msg.origin => {
-                self.engine.set_virtual_time(chrono::Duration::zero(), false)?;
+                self.engine
+                    .set_virtual_time(chrono::Duration::zero(), false)?;
             }
             None if !msg.origin => println!(
                 "{}",
@@ -791,17 +785,26 @@ fn print_object_info(object: &Object, coord: &GenCoord) {
     println!("\ttime = {}", TimeFormat::VirtualTimeShort(coord.time()));
 
     let location = coord.location();
-    println!("\tlocation = {{{}, {}, {}}}", location[0], location[1], location[2]);
+    println!(
+        "\tlocation = {{{}, {}, {}}}",
+        location[0], location[1], location[2]
+    );
 
     let velocty = coord.velocity();
-    println!("\tvelocity = {{{}, {}, {}}}", velocty[0], velocty[1], velocty[2]);
+    println!(
+        "\tvelocity = {{{}, {}, {}}}",
+        velocty[0], velocty[1], velocty[2]
+    );
 
     println!("\tradius = {}", object.radius());
 
     let color = object.color();
     println!("\tcolor = {{{}, {}, {}}}", color[0], color[1], color[2]);
     println!("\tmass = {}", object.mass());
-    println!("\tcompute_step = {}", TimeFormat::VirtualTimeShort(object.compute_step()));
+    println!(
+        "\tcompute_step = {}",
+        TimeFormat::VirtualTimeShort(object.compute_step())
+    );
     println!("}}");
 }
 

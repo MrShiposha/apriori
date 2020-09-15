@@ -6,9 +6,9 @@ mod engine;
 mod error;
 mod graphics;
 mod layer;
-mod object;
 mod logger;
 mod message;
+mod object;
 mod storage;
 mod r#type;
 

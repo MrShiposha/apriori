@@ -1,24 +1,18 @@
 use {
     crate::{
-        r#type::{
-            ObjectId,
-            LocationId,
-            Coord,
-            RawTime,
-            IntoRustDuration,
-            AsRelativeTime,
-            Vector,
-            Distance,
-        },
+        engine::context::{CollisionInfo, TimeRange, TrackPartInfo},
         graphics,
-        object::{Object, GenCoord},
-        engine::{
-            context::{GlobalTrackPartId, TimeRange},
-            actor::{TrackPartInfo, CollisionInfo},
-        }
+        object::{GenCoord, Object},
+        r#type::{
+            AsRelativeTime, Coord, Distance, IntoRustDuration, LocationId, ObjectId, RawTime,
+            Vector,
+        },
     },
-    serde::{Deserialize, Deserializer, de::{Visitor, SeqAccess}},
     lr_tree::*,
+    serde::{
+        de::{SeqAccess, Visitor},
+        Deserialize, Deserializer,
+    },
 };
 
 const OBJECT_FIELDS_LEN: usize = 6;
@@ -39,13 +33,13 @@ pub struct LocationInfo {
     pub vcy: Option<Coord>, // vy after collision
     pub vcz: Option<Coord>, // vz after collision
 
-    pub collision_partners: Vec<LocationId>
+    pub collision_partners: Vec<LocationId>,
 }
 
 impl<'de> Deserialize<'de> for LocationInfo {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: Deserializer<'de>
+        D: Deserializer<'de>,
     {
         struct ObjectVisitor;
 
@@ -72,9 +66,7 @@ impl<'de> Deserialize<'de> for LocationInfo {
                 let vcx = seq.next_element().unwrap_or(None);
                 let vcy = seq.next_element().unwrap_or(None);
                 let vcz = seq.next_element().unwrap_or(None);
-                let collision_partners = seq.next_element()
-                    .unwrap_or(Some(vec![]))
-                    .unwrap();
+                let collision_partners = seq.next_element().unwrap_or(Some(vec![])).unwrap();
 
                 let location_info = LocationInfo {
                     location_id,
@@ -89,7 +81,7 @@ impl<'de> Deserialize<'de> for LocationInfo {
                     vcx,
                     vcy,
                     vcz,
-                    collision_partners
+                    collision_partners,
                 };
 
                 Ok(location_info)
@@ -105,7 +97,7 @@ pub struct ObjectInfo(pub ObjectId, pub Object);
 impl<'de> Deserialize<'de> for ObjectInfo {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: Deserializer<'de>
+        D: Deserializer<'de>,
     {
         struct ObjectInfoVisitor;
 
@@ -130,14 +122,7 @@ impl<'de> Deserialize<'de> for ObjectInfo {
                 let compute_step: RawTime = seq.next_element()?.expect("expected compute step");
                 let compute_step = compute_step.into_rust_duration();
 
-                let object = Object::new(
-                    layer_id,
-                    name,
-                    radius,
-                    color,
-                    mass,
-                    compute_step
-                );
+                let object = Object::new(layer_id, name, radius, color, mass, compute_step);
 
                 Ok(ObjectInfo(object_id, object))
             }
@@ -149,61 +134,46 @@ impl<'de> Deserialize<'de> for ObjectInfo {
 
 pub fn make_gen_coord(location_info: &LocationInfo) -> GenCoord {
     let time = location_info.t;
-    let location = Vector::new(
-        location_info.x,
-        location_info.y,
-        location_info.z,
-    );
-    let velocity = Vector::new(
-        location_info.vx,
-        location_info.vy,
-        location_info.vz,
-    );
+    let location = Vector::new(location_info.x, location_info.y, location_info.z);
+    let velocity = Vector::new(location_info.vx, location_info.vy, location_info.vz);
 
     GenCoord::new(time, location, velocity)
 }
 
-pub fn make_track_part_info(last_coord: GenCoord, location_info: LocationInfo) -> TrackPartInfo {
+pub fn make_track_part_info(
+    object_id: ObjectId,
+    last_coord: GenCoord,
+    location_info: LocationInfo,
+) -> TrackPartInfo {
     let collision_info;
     if location_info.collision_partners.is_empty() {
         collision_info = None;
     } else {
-        collision_info = Some(
-            CollisionInfo {
-                final_velocity: Vector::new(
-                    location_info.vcx.unwrap(),
-                    location_info.vcy.unwrap(),
-                    location_info.vcz.unwrap(),
-                ),
-                partners_ids: vec![] // must be set externally
-            }
-        )
+        collision_info = Some(CollisionInfo {
+            final_velocity: Vector::new(
+                location_info.vcx.unwrap(),
+                location_info.vcy.unwrap(),
+                location_info.vcz.unwrap(),
+            ),
+            partners_ids: vec![], // must be set externally
+        })
     }
 
     TrackPartInfo {
-        global_track_part_id: GlobalTrackPartId::default(), // must be set externally
+        object_id,
         start_location: last_coord.location().clone(),
-        end_location: Vector::new(
-            location_info.x,
-            location_info.y,
-            location_info.z,
-        ),
+        end_location: Vector::new(location_info.x, location_info.y, location_info.z),
         start_velocity: last_coord.velocity().clone(),
-        end_velocity: Vector::new(
-            location_info.vx,
-            location_info.vy,
-            location_info.vz,
-        ),
-        collision_info
+        end_velocity: Vector::new(location_info.vx, location_info.vy, location_info.vz),
+        collision_info,
     }
 }
 
-pub fn make_global_mbr(
+pub fn make_track_part_mbr(
     time_range: &TimeRange,
     object_radius: Distance,
-    local_track_part_info: &TrackPartInfo
+    local_track_part_info: &TrackPartInfo,
 ) -> MBR<Coord> {
-
     macro_rules! min_max {
         ($a:expr, $b:expr) => {
             if $a < $b {
@@ -224,20 +194,11 @@ pub fn make_global_mbr(
     let start_location = local_track_part_info.start_location;
     let end_location = local_track_part_info.end_location;
 
-    let (
-        x_min,
-        x_max
-    ) = min_max![start_location[0], end_location[0]];
+    let (x_min, x_max) = min_max![start_location[0], end_location[0]];
 
-    let (
-        y_min,
-        y_max
-    ) = min_max![start_location[1], end_location[1]];
+    let (y_min, y_max) = min_max![start_location[1], end_location[1]];
 
-    let (
-        z_min,
-        z_max
-    ) = min_max![start_location[2], end_location[2]];
+    let (z_min, z_max) = min_max![start_location[2], end_location[2]];
 
     let mbr = mbr! {
         t = [time_start; time_end],
