@@ -339,6 +339,7 @@ impl App {
 
                 Ok(())
             }
+            Message::RTree(msg) => self.handle_rtree_msg(msg),
             unexpected => return Err(Error::UnexpectedMessage(unexpected)),
         }
     }
@@ -376,6 +377,16 @@ impl App {
         println!(" --- layer \"{}\" objects ---", layer.name());
         for (object, _) in layer.iter_objects() {
             println!("\t{}", object.name());
+        }
+
+        Ok(())
+    }
+
+    fn handle_rtree_msg(&mut self, msg: message::RTree) -> Result<()> {
+        if msg.disable {
+            self.engine.hide_rtree();
+        } else {
+            self.engine.show_rtree();
         }
 
         Ok(())
@@ -476,22 +487,6 @@ impl App {
 
         Ok(())
     }
-
-    // fn handle_add_object(&mut self, msg: message::AddObject) -> Result<()> {
-    //     let object_index = self.object_index;
-    //     self.object_index += 1;
-
-    //     let default_name = format!("object-{}", object_index);
-
-    //     self.scene_mgr.add_object(
-    //         &mut self.engine,
-    //         msg,
-    //         self.virtual_time,
-    //         default_name
-    //     )?;
-
-    //     Ok(())
-    // }
 
     // fn handle_rename_object(&mut self, msg: message::RenameObject) -> Result<()> {
     // self.scene_mgr.rename_object(&mut self.engine, msg.old_name, msg.new_name)

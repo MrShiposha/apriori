@@ -101,24 +101,33 @@ CREATE OR REPLACE FUNCTION {schema_name}.query_object_layers_info(
     active_layer_id integer,
     object_id bigint,
     in_start_time bigint,
-    in_stop_time bigint
+    in_stop_time bigint,
+    step_coeff integer
 ) RETURNS TABLE (
     layer_id integer,
     layer_start_time bigint,
     layer_stop_time bigint
 ) AS $$
     DECLARE
-        obj_compute_step bigint;
+        left_step bigint;
+        right_step bigint;
     BEGIN
-        SELECT 2*compute_step
+        SELECT compute_step
         FROM {schema_name}.object
-        INTO obj_compute_step;
+        INTO right_step;
+
+        IF step_coeff = 0 THEN
+            left_step := -right_step;
+        ELSE
+            right_step := right_step * step_coeff;
+            left_step := right_step;
+        END IF;
 
         RETURN QUERY
         SELECT
             temp_layer_id as layer_id,
-            GREATEST(temp_start_time, in_start_time - obj_compute_step) AS start_time,
-            LEAST(lead(temp_start_time) OVER (ORDER BY temp_layer_id ASC), in_stop_time + obj_compute_step) AS stop_time
+            GREATEST(temp_start_time, in_start_time + left_step) AS start_time,
+            LEAST(lead(temp_start_time) OVER (ORDER BY temp_layer_id ASC), in_stop_time + right_step) AS stop_time
         FROM (
             SELECT
                 layer_fk_id as temp_layer_id, MIN(t) as temp_start_time
@@ -134,7 +143,8 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION {schema_name}.range_locations(
     active_layer_id integer,
     in_start_time bigint,
-    in_stop_time bigint
+    in_stop_time bigint,
+    step_coeff integer
 ) RETURNS TABLE (
     out_location_id bigint,
     out_object_fk_id bigint,
@@ -162,7 +172,13 @@ AS $$
             COALESCE(c_partners.partners_array, '{{}}')
         FROM {schema_name}.location
         -- INNER JOIN {schema_name}.query_layers_info(active_layer_id, in_start_time, in_stop_time) layers_info
-        INNER JOIN {schema_name}.query_object_layers_info(active_layer_id, object_fk_id, in_start_time, in_stop_time) layers_info
+        INNER JOIN {schema_name}.query_object_layers_info(
+            active_layer_id,
+            object_fk_id,
+            in_start_time,
+            in_stop_time,
+            step_coeff
+        ) layers_info
             ON layer_fk_id = layers_info.layer_id
             AND t BETWEEN layers_info.layer_start_time AND layers_info.layer_stop_time
         LEFT OUTER JOIN (

@@ -149,9 +149,13 @@ impl Engine {
 
     pub fn set_virtual_time(
         &mut self,
-        vtime: chrono::Duration,
+        mut vtime: chrono::Duration,
         try_current_context: bool,
     ) -> Result<()> {
+        if vtime < chrono::Duration::zero() {
+            vtime = chrono::Duration::zero();
+        }
+
         self.wait_for_new_context = true;
         self.virtual_time = vtime;
 
@@ -486,6 +490,18 @@ impl Engine {
         Ok(())
     }
 
+    pub fn show_rtree(&mut self) {
+        if self.scene.has_rtree() {
+            self.scene.show_rtree()
+        } else {
+            self.scene.create_rtree(&self.context);
+        }
+    }
+
+    pub fn hide_rtree(&mut self) {
+        self.scene.hide_rtree();
+    }
+
     fn new_session_helper(
         &mut self,
         session_name: Option<SessionName>,
@@ -558,9 +574,17 @@ impl Engine {
         let context = Arc::clone(&self.context);
 
         rayon::spawn(move || {
-            let new_context = context.replicate(new_session_id, new_layer_id, new_time_range);
+            let (new_context, update_kind) = context.replicate(
+                new_session_id,
+                new_layer_id,
+                new_time_range
+            );
 
-            if let Ok(new_context) = new_context.update_content(storage_mgr, ctx_upd_intrp_recv) {
+            if let Ok(new_context) = new_context.update_content(
+                storage_mgr,
+                update_kind,
+                ctx_upd_intrp_recv
+            ) {
                 match ctx_sender.send(new_context) {
                     Ok(_) => trace! {
                         target: LOG_TARGET,

@@ -137,14 +137,17 @@ impl Context {
         new_session_id: SessionId,
         new_layer_id: LayerId,
         new_time_range: TimeRange,
-    ) -> Context {
+    ) -> (Context, UpdateKind) {
         if new_session_id != self.session_id || new_layer_id != self.layer_id {
             info! {
                 target: LOG_TARGET,
                 "create a context on a new layer"
             }
 
-            return Self::with_time_range(new_session_id, new_layer_id, new_time_range);
+            return (
+                Self::with_time_range(new_session_id, new_layer_id, new_time_range.clone()),
+                UpdateKind::Initial(new_time_range)
+            );
         }
 
         let session_id = self.session_id;
@@ -153,38 +156,83 @@ impl Context {
         let actors_names = self.actors_names.clone();
         let time_range = new_time_range;
 
-        if self.time_range.contains(time_range.start()) {
-            info! {
-                target: LOG_TARGET,
-                "replicate the context with a new time range"
-            }
+        let new_context;
+        // let split_ratio = self.time_range.ratio(time_range.start());
 
-            // if another context is going to be created (in parallel) -
-            // restore all removed elements.
-            self.tracks_tree.restore_removed();
+        // if another context is going to be created (in parallel) -
+        // restore all removed elements.
+        // self.tracks_tree.restore_removed();
 
-            let from = self.time_range.start().as_relative_time();
-            let to = time_range.start().as_relative_time();
+        // TODO cut the unneeded tracks, load only needed.
+        // if 0.0 <= split_ratio && split_ratio <= 1.0 {
+        //     info! {
+        //         target: LOG_TARGET,
+        //         "replicate the context with a new time range"
+        //     }
 
-            let remove_area = mbr![t = [from; to]];
+        //     let from = self.time_range.start().as_relative_time();
+        //     let to = time_range.start().as_relative_time();
 
-            self.tracks_tree.retain(&remove_area, |obj_space, id| {
-                obj_space.get_data_mbr(id).bounds(0).max >= to
-            });
+        //     let remove_area = mbr![t = [from; to]];
 
-            let tracks_space = self.tracks_tree.lock_obj_space().clone_shrinked();
-            let tracks_tree = TracksTree::with_obj_space(tracks_space);
+        //     self.tracks_tree.retain(&remove_area, |obj_space, id| {
+        //         obj_space.get_data_mbr(id).bounds(0).max >= to
+        //     });
 
-            Self {
-                session_id,
-                layer_id,
-                actors,
-                actors_names,
-                tracks_tree,
-                time_range,
-                new_objects: vec![],
-            }
-        } else {
+        //     let tracks_space = self.tracks_tree.lock_obj_space().clone_shrinked();
+        //     let tracks_tree = TracksTree::with_obj_space(tracks_space);
+
+        //     let update_time_range = TimeRange::with_bounds(
+        //         self.time_range.end(),
+        //         time_range.end()
+        //     );
+
+        //     new_context = Self {
+        //         session_id,
+        //         layer_id,
+        //         actors,
+        //         actors_names,
+        //         tracks_tree,
+        //         time_range,
+        //         new_objects: vec![],
+        //     };
+
+        //     (new_context, UpdateKind::Forward(update_time_range))
+        // } else if -1.0 <= split_ratio && split_ratio <= 0.0 {
+        //     info! {
+        //         target: LOG_TARGET,
+        //         "replicate the context with a new time range"
+        //     }
+
+        //     let from = time_range.end().as_relative_time();
+        //     let to = self.time_range.end().as_relative_time();
+
+        //     let remove_area = mbr![t = [from; to]];
+
+        //     self.tracks_tree.retain(&remove_area, |obj_space, id| {
+        //         obj_space.get_data_mbr(id).bounds(0).max >= from
+        //     });
+
+        //     let tracks_space = self.tracks_tree.lock_obj_space().clone_shrinked();
+        //     let tracks_tree = TracksTree::with_obj_space(tracks_space);
+
+        //     let update_time_range = TimeRange::with_bounds(
+        //         time_range.start(),
+        //         self.time_range.start()
+        //     );
+
+        //     new_context = Self {
+        //         session_id,
+        //         layer_id,
+        //         actors,
+        //         actors_names,
+        //         tracks_tree,
+        //         time_range,
+        //         new_objects: vec![],
+        //     };
+
+        //     (new_context, UpdateKind::Backward(update_time_range))
+        // } else {
             info! {
                 target: LOG_TARGET,
                 "create a new context with a new time range"
@@ -192,24 +240,27 @@ impl Context {
 
             let tracks_tree = TracksTree::with_obj_space(Self::new_tracks_space());
 
-            Self {
+            new_context = Self {
                 session_id,
                 layer_id,
                 actors,
                 actors_names,
                 tracks_tree,
-                time_range,
+                time_range: time_range.clone(),
                 new_objects: vec![],
-            }
-        }
+            };
+
+            (new_context, UpdateKind::Initial(time_range))
+        // }
     }
 
     pub fn update_content(
         mut self,
         storage_mgr: StorageManager,
+        update_kind: UpdateKind,
         _interrupter: mpsc::Receiver<()>,
     ) -> Result<Self> {
-        self.load_content_from_db(storage_mgr)?;
+        self.load_content_from_db(storage_mgr, update_kind)?;
 
         let arc_self = Arc::new(self);
 
@@ -218,7 +269,7 @@ impl Context {
         Arc::try_unwrap(arc_self).map_err(|_| Error::ContextUpdateInterrupted)
     }
 
-    fn load_content_from_db(&mut self, storage_mgr: StorageManager) -> Result<()> {
+    fn load_content_from_db(&mut self, storage_mgr: StorageManager, update_kind: UpdateKind) -> Result<()> {
         let mut connection = storage_mgr.pool.get()?;
         let reader = connection.copy_out(query![
             "COPY (
@@ -257,12 +308,13 @@ impl Context {
 
                             NULLIF(array_to_string(out_collision_partners, ','), '')
                         FROM
-                            {schema_name}.range_locations({layer_id}, {start_time}, {stop_time})
+                            {schema_name}.range_locations({layer_id}, {start_time}, {stop_time}, {step_coeff})
                     )
                 TO stdout WITH (FORMAT CSV)",
             layer_id = self.layer_id,
-            start_time = self.time_range.start().into_storage_duration(),
-            stop_time = self.time_range.end().into_storage_duration()
+            start_time = update_kind.time_range().start().into_storage_duration(),
+            stop_time = update_kind.time_range().end().into_storage_duration(),
+            step_coeff = update_kind.as_step_coeff()
         ])?;
 
         let mut reader = csv::ReaderBuilder::new()
@@ -356,5 +408,29 @@ impl Context {
 
     fn new_tracks_space() -> TracksSpace {
         TracksSpace::new(GLOBAL_TREE_DIM, TREE_MIN_RECS, TREE_MAX_RECS)
+    }
+}
+
+pub enum UpdateKind {
+    Initial(TimeRange),
+    Forward(TimeRange),
+    Backward(TimeRange)
+}
+
+impl UpdateKind {
+    fn as_step_coeff(&self) -> i16 {
+        match self {
+            UpdateKind::Initial(_) => 0,
+            UpdateKind::Forward(_) => 1,
+            UpdateKind::Backward(_) => -1,
+        }
+    }
+
+    fn time_range(&self) -> &TimeRange {
+        match self {
+            UpdateKind::Initial(tr) => tr,
+            UpdateKind::Forward(tr) => tr,
+            UpdateKind::Backward(tr) => tr,
+        }
     }
 }

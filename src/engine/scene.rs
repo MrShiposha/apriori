@@ -1,7 +1,7 @@
 use {
     crate::{
-        engine::context::Context,
-        r#type::{AsTimeMBR, Coord, ObjectId, Vector},
+        engine::context::{Context, TrackPartInfo},
+        r#type::{AsTimeMBR, Coord, ObjectId, ObjectName, Vector},
     },
     kiss3d::scene::SceneNode,
     log::{trace, warn},
@@ -14,6 +14,7 @@ const LOG_TARGET: &'static str = "scene";
 pub struct Scene {
     root: SceneNode,
     objects_map: HashMap<ObjectId, SceneNode>,
+    rtree: Option<SceneNode>,
 }
 
 impl Scene {
@@ -21,6 +22,7 @@ impl Scene {
         Self {
             root,
             objects_map: HashMap::new(),
+            rtree: None,
         }
     }
 
@@ -51,6 +53,17 @@ impl Scene {
             }
 
             self.objects_map.insert(id, sphere);
+        }
+
+        match self.rtree {
+            Some(ref mut rtree) => {
+                if rtree.is_visible() {
+                    self.create_rtree(new_context);
+                } else {
+                    rtree.unlink();
+                }
+            }
+            _ => {}
         }
     }
 
@@ -85,26 +98,64 @@ impl Scene {
 
         for unvisited_id in diff {
             let actor = context.actor(unvisited_id);
-            let last_coord = actor.last_gen_coord().unwrap();
+            match actor.last_gen_coord() {
+                None => self.handle_future_object(unvisited_id, actor.object().name()),
+                Some(last_coord) if last_coord.time() > vtime => {
+                    self.handle_future_object(unvisited_id, actor.object().name());
+                },
+                Some(last_coord) => {
+                    warn! {
+                        target: LOG_TARGET,
+                        "object \"{}\" is not yet computed",
+                        actor.object().name()
+                    }
 
-            if last_coord.time() > vtime {
-                trace! {
-                    target: LOG_TARGET,
-                    "object \"{}\" is not yet appeared",
-                    actor.object().name()
+                    self.set_obj_translation(unvisited_id, last_coord.location().clone());
                 }
-
-                self.hide_object(unvisited_id);
-            } else {
-                warn! {
-                    target: LOG_TARGET,
-                    "object \"{}\" is not yet computed",
-                    actor.object().name()
-                }
-
-                self.set_obj_translation(unvisited_id, last_coord.location().clone());
             }
         }
+    }
+
+    pub fn create_rtree(&mut self, context: &Context) {
+        if let Some(ref mut rtree) = self.rtree {
+            rtree.unlink();
+        }
+
+        self.rtree = Some(self.root.add_group());
+
+        let mut visitor = RTreeVisitor {
+            scene: self,
+            context
+        };
+
+        context.tracks_tree().visit(&mut visitor);
+    }
+
+    pub fn has_rtree(&mut self) -> bool {
+        self.rtree.is_some()
+    }
+
+    pub fn show_rtree(&mut self) {
+        self.rtree
+            .as_mut()
+            .expect("rtree node must be already created")
+            .set_visible(true)
+    }
+
+    pub fn hide_rtree(&mut self) {
+        if let Some(ref mut rtree) = self.rtree {
+            rtree.set_visible(false);
+        }
+    }
+
+    fn handle_future_object(&mut self, object_id: &ObjectId, obj_name: &ObjectName) {
+        trace! {
+            target: LOG_TARGET,
+            "object \"{}\" is not yet appeared",
+            obj_name
+        }
+
+        self.hide_object(object_id);
     }
 
     fn set_obj_translation(&mut self, id: &ObjectId, location: Vector) {
@@ -124,4 +175,60 @@ impl Scene {
 
 fn make_translation(location: Vector) -> Translation3<Coord> {
     Translation3::new(location[0], location[1], location[2])
+}
+
+struct RTreeVisitor<'scene, 'ctx> {
+    scene: &'scene mut Scene,
+    context: &'ctx Context,
+}
+
+impl<'node, 'ctx> lr_tree::Visitor<Coord, TrackPartInfo> for RTreeVisitor<'node, 'ctx> {
+    fn enter_node(&mut self, _: lr_tree::RecordId, node: &lr_tree::InternalNode<Coord>) {
+        make_cube_from_mbr(self.scene.rtree.as_mut().unwrap(), node.mbr());
+    }
+
+    fn leave_node(&mut self, _: lr_tree::RecordId, _: &lr_tree::InternalNode<Coord>) {
+        // do nothing
+    }
+
+    fn visit_data(&mut self, _: lr_tree::RecordId, node: &lr_tree::DataNode<Coord, TrackPartInfo>) {
+        let mut cube = make_cube_from_mbr(
+            self.scene.rtree.as_mut().unwrap(),
+            node.mbr()
+        );
+
+        let color = self.context.actor(&node.payload().object_id).object().color();
+        cube.set_color(color[0], color[1], color[2]);
+    }
+}
+
+fn make_cube_from_mbr(node: &mut SceneNode, mbr: &lr_tree::MBR<Coord>) -> SceneNode {
+    // axis_index == 0 -- it is a time.
+    let x_bounds = mbr.bounds(1);
+    let y_bounds = mbr.bounds(2);
+    let z_bounds = mbr.bounds(3);
+
+    let x_len = x_bounds.length();
+    let y_len = y_bounds.length();
+    let z_len = z_bounds.length();
+
+    let x = x_bounds.min + x_len / 2.0;
+    let y = y_bounds.min + y_len / 2.0;
+    let z = z_bounds.min + z_len / 2.0;
+
+    let mut cube = node.add_cube(
+        x_len,
+        y_len,
+        z_len
+    );
+
+    cube.set_local_translation(
+        Translation3::new(x, y, z)
+    );
+
+    cube.set_points_size(10.0);
+    cube.set_lines_width(1.0);
+    cube.set_surface_rendering_activation(false);
+
+    cube
 }
