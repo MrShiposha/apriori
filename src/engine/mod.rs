@@ -3,16 +3,17 @@ use {
         layer::Layer,
         r#type::{
             LayerId, LayerName, ObjectName, RawTime, SessionId, SessionInfo, SessionName,
-            TimeFormat,
+            TimeFormat, Color,
         },
         storage::{self, StorageManager, StorageTransaction},
         transaction, Error, Result,
     },
-    kiss3d::scene::SceneNode,
+    kiss3d::{scene::SceneNode, window::Window, camera::Camera},
     lazy_static::lazy_static,
     log::{error, trace, warn},
     ptree::{item::StringItem, TreeBuilder},
     std::sync::{mpsc, Arc},
+    nalgebra::Point2,
 };
 
 pub mod actor;
@@ -34,6 +35,13 @@ lazy_static! {
         chrono::Duration::seconds(ACCESS_UPDATE_TIME.num_seconds() + 10);
 }
 
+pub struct DebugInfoSettings {
+    pub tracks: Option<chrono::Duration>,
+    pub names: bool,
+    pub show_rtree: bool,
+    pub sim_stats: bool,
+}
+
 pub struct Engine {
     storage_mgr: StorageManager,
     context: Arc<Context>,
@@ -49,6 +57,7 @@ pub struct Engine {
     frame_count: usize,
     target_time_range: Option<TimeRange>,
     wait_for_new_context: bool,
+    debug_info_settings: DebugInfoSettings,
 }
 
 impl Engine {
@@ -72,6 +81,12 @@ impl Engine {
             frame_count: 0,
             target_time_range: None,
             wait_for_new_context: false,
+            debug_info_settings: DebugInfoSettings {
+                tracks: None,
+                names: false,
+                show_rtree: false,
+                sim_stats: true,
+            },
         };
 
         let session_name = None;
@@ -137,6 +152,17 @@ impl Engine {
         Ok(())
     }
 
+    pub fn draw_debug_info<C: Camera>(&mut self, window: &mut Window, camera: &mut C) {
+        let context = self.context.as_ref();
+        let settings = &self.debug_info_settings;
+
+        self.scene.draw_debug_info(window, camera, context, settings, self.virtual_time);
+
+        if settings.sim_stats {
+            self.draw_simulation_stats(window);
+        }
+    }
+
     pub fn compute_locations(&mut self) {}
 
     pub fn context(&self) -> &Context {
@@ -180,16 +206,68 @@ impl Engine {
         self.virtual_step = vstep;
     }
 
-    pub fn last_frame_delta(&self) -> chrono::Duration {
-        self.last_frame_delta
-    }
-
-    pub fn frame(&self) -> usize {
-        self.frame_count
-    }
-
     pub fn frame_avg_time_ms(&self) -> f32 {
         self.frames_sum_time_ms as f32 / self.frame_count as f32
+    }
+
+    pub fn toggle_rtree(&mut self) {
+        self.debug_info_settings.show_rtree = !self.debug_info_settings.show_rtree;
+    }
+
+    pub fn show_tracks(&mut self, track_step: chrono::Duration) {
+        self.debug_info_settings.tracks = Some(track_step);
+    }
+
+    pub fn hide_tracks(&mut self) {
+        self.debug_info_settings.tracks = None;
+    }
+
+    pub fn toggle_names(&mut self) {
+        self.debug_info_settings.names = !self.debug_info_settings.names;
+    }
+
+    fn draw_simulation_stats(&mut self, window: &mut Window) {
+        use std::fmt::Write;
+
+        let pos = Point2::new(0.0, 150.0);
+
+        let mut stats_text = String::new();
+
+        writeln!(&mut stats_text, "frame #{}", self.frame_count).unwrap();
+
+        writeln!(
+            &mut stats_text,
+            "virtual time: {}",
+            TimeFormat::VirtualTimeLong(self.virtual_time)
+        )
+        .unwrap();
+
+        writeln!(
+            &mut stats_text,
+            "virtual time step: {}",
+            TimeFormat::VirtualTimeShort(self.virtual_step)
+        )
+        .unwrap();
+
+        writeln!(
+            &mut stats_text,
+            "frame delta time: {}",
+            TimeFormat::FrameDelta(self.last_frame_delta)
+        )
+        .unwrap();
+
+        writeln!(
+            &mut stats_text,
+            "frame avg ms: {}",
+            self.frame_avg_time_ms()
+        )
+        .unwrap();
+
+        self.scene.draw_text(window, &stats_text, pos, Color::new(1.0, 0.0, 1.0));
+    }
+
+    pub fn scene_mut(&mut self) -> &mut Scene {
+        &mut self.scene
     }
 
     pub fn add_layer(&mut self, layer: Layer) -> Result<()> {
@@ -488,18 +566,6 @@ impl Engine {
         }
 
         Ok(())
-    }
-
-    pub fn show_rtree(&mut self) {
-        if self.scene.has_rtree() {
-            self.scene.show_rtree()
-        } else {
-            self.scene.create_rtree(&self.context);
-        }
-    }
-
-    pub fn hide_rtree(&mut self) {
-        self.scene.hide_rtree();
     }
 
     fn new_session_helper(

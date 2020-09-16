@@ -1,12 +1,17 @@
 use {
     crate::{
-        engine::context::{Context, TrackPartInfo},
-        r#type::{AsTimeMBR, Coord, ObjectId, ObjectName, Vector},
+        engine::{
+            DebugInfoSettings,
+            context::{Context, TrackPartInfo, TracksSpace, TrackPartId},
+        },
+        graphics,
+        r#type::{AsTimeMBR, Coord, ObjectId, ObjectName, Vector, Color, AsRelativeTime, RelativeTime},
     },
-    kiss3d::scene::SceneNode,
+    kiss3d::{scene::SceneNode, window::Window, camera::Camera, text::Font},
     log::{trace, warn},
-    nalgebra::Translation3,
-    std::collections::{HashMap, HashSet},
+    nalgebra::{Translation3, Point3, Point2, Vector2},
+    std::collections::{HashMap, HashSet, hash_map::Entry},
+    lr_tree::mbr,
 };
 
 const LOG_TARGET: &'static str = "scene";
@@ -70,17 +75,14 @@ impl Scene {
     pub fn set_time(&mut self, context: &Context, vtime: chrono::Duration) {
         let mut visited_objects = HashSet::new();
 
+        let t = vtime.as_relative_time();
         let mbr = vtime.as_mbr();
         context.tracks_tree().search_access(&mbr, |obj_space, id| {
-            let track_part_mbr = obj_space.get_data_mbr(id);
-            let track_part_info = obj_space.get_data_payload(id);
-
-            let object_id = track_part_info.object_id;
-
-            let location = context.location(
-                track_part_mbr,
-                track_part_info,
-                mbr.bounds(0).min, // or `.max` - it doesn't matter.
+            let (object_id, location) = Self::location_info(
+                context,
+                t,
+                obj_space,
+                id
             );
 
             self.set_obj_translation(&object_id, location);
@@ -116,6 +118,171 @@ impl Scene {
         }
     }
 
+    pub fn draw_debug_info<C: Camera>(
+        &mut self,
+        window: &mut Window,
+        camera: &mut C,
+        context: &Context,
+        settings: &DebugInfoSettings,
+        vtime: chrono::Duration,
+    ) {
+        match self.rtree {
+            Some(ref mut rtree) if settings.show_rtree => rtree.set_visible(true),
+            Some(ref mut rtree) => rtree.set_visible(false),
+            None if settings.show_rtree => self.create_rtree(context),
+            _ => {}
+        }
+
+        if let Some(track_step) = settings.tracks {
+            self.draw_tracks(window, context, track_step);
+        }
+
+        if settings.names {
+            self.draw_names(window, camera, context, vtime);
+        }
+    }
+
+    fn draw_tracks(
+        &mut self,
+        window: &mut Window,
+        context: &Context,
+        track_step: chrono::Duration
+    ) {
+        debug_assert!(track_step > chrono::Duration::zero());
+
+        let mut last_pos = HashMap::new();
+        let step = track_step.as_relative_time();
+
+        let tracks_tree = context.tracks_tree().lock_obj_space();
+        let tracks_mbr = tracks_tree.get_root_mbr();
+        let mut begin = tracks_mbr.bounds(0).min;
+        let end = tracks_mbr.bounds(0).max;
+
+        std::mem::drop(tracks_tree);
+
+        while begin < end {
+            let mbr = mbr![t = [begin; begin]];
+
+            context.tracks_tree().search_access(&mbr, |obj_space, id| {
+                let (object_id, location) = Self::location_info(
+                    context,
+                    begin,
+                    obj_space,
+                    id
+                );
+
+                match last_pos.entry(object_id) {
+                    Entry::Vacant(entry) => {
+                        entry.insert(location);
+                    },
+                    Entry::Occupied(mut entry) => {
+                        let prev_location = entry.get();
+                        let color= context.actor(entry.key()).object().color();
+
+                        let from = Point3::new(
+                            prev_location[0],
+                            prev_location[1],
+                            prev_location[2],
+                        );
+
+                        let to = Point3::new(
+                            location[0],
+                            location[1],
+                            location[2],
+                        );
+
+                        window.draw_line(&from, &to, color);
+
+                        entry.insert(location);
+                    }
+                }
+            });
+
+            begin += step;
+        }
+    }
+
+    fn draw_names<C: Camera>(
+        &mut self,
+        window: &mut Window,
+        camera: &mut C,
+        context: &Context,
+        vtime: chrono::Duration
+    ) {
+        let t = vtime.as_relative_time();
+        let mbr = vtime.as_mbr();
+
+        let hidpi = window.hidpi_factor() as f32;
+        let width = window.width() as f32 * hidpi;
+        let height = window.height() as f32 * hidpi;
+
+        let screen_size = Vector2::new(width, height);
+
+        let text_size = 85.0;
+        let text_shift = Vector2::new(
+            text_size * hidpi / 4.0,
+            -text_size * hidpi / 2.0
+        );
+
+        context.tracks_tree().search_access(
+            &mbr,
+            |obj_space, id| {
+                let (object_id, location) = Self::location_info(context, t, obj_space, id);
+
+                let world_coord = Point3::new(
+                    location[0],
+                    location[1],
+                    location[2],
+                );
+
+                let text_beg_location = camera.project(
+                    &world_coord,
+                    &screen_size
+                ).scale(hidpi * 2.0);
+
+                let text_location = text_beg_location - text_shift;
+                let text_location = Point2::new(
+                    text_location[0],
+                    height * 2.0 - text_location[1],
+                );
+
+                let object = context.actor(&object_id).object();
+
+                let src_color = object.color();
+                let color = graphics::opposite_color(src_color);
+
+                self.draw_text(
+                    window,
+                    format!("+ {}", object.name()).as_str(),
+                    text_location,
+                    color
+                )
+            }
+        )
+    }
+
+    pub fn draw_text(&mut self, window: &mut Window, text: &str, pos: Point2<f32>, color: Color) {
+        let scale = 75.0;
+        let font = Font::default();
+
+        window.draw_text(text, &pos, scale, &font, &color);
+    }
+
+    fn location_info(context: &Context, t: RelativeTime, obj_space: &TracksSpace, id: TrackPartId) -> (ObjectId, Vector) {
+        let track_part_mbr = obj_space.get_data_mbr(id);
+        let track_part_info = obj_space.get_data_payload(id);
+
+        let object_id = track_part_info.object_id;
+
+        let location = context.location(
+            track_part_mbr,
+            track_part_info,
+            t,
+        );
+
+        (object_id, location)
+    }
+
     pub fn create_rtree(&mut self, context: &Context) {
         if let Some(ref mut rtree) = self.rtree {
             rtree.unlink();
@@ -129,23 +296,6 @@ impl Scene {
         };
 
         context.tracks_tree().visit(&mut visitor);
-    }
-
-    pub fn has_rtree(&mut self) -> bool {
-        self.rtree.is_some()
-    }
-
-    pub fn show_rtree(&mut self) {
-        self.rtree
-            .as_mut()
-            .expect("rtree node must be already created")
-            .set_visible(true)
-    }
-
-    pub fn hide_rtree(&mut self) {
-        if let Some(ref mut rtree) = self.rtree {
-            rtree.set_visible(false);
-        }
     }
 
     fn handle_future_object(&mut self, object_id: &ObjectId, obj_name: &ObjectName) {

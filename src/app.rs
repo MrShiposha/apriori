@@ -14,7 +14,6 @@ use kiss3d::{
     event::{Action, Key, Modifiers, WindowEvent},
     light::Light,
     scene::SceneNode,
-    text::Font,
     window::{CanvasSetup, NumSamples, Window},
 };
 use layer::Layer;
@@ -23,7 +22,7 @@ use nalgebra::{Point2, Point3 /*Vector2*/};
 use object::{GenCoord, Object};
 use ptree;
 use std::{
-    fmt::{self, Write},
+    fmt,
     path::PathBuf,
     sync::mpsc::TryRecvError,
 };
@@ -69,10 +68,6 @@ pub struct App {
     camera: FirstPerson,
     state: Shared<State>,
     new_layer: Option<Layer>,
-    is_stats_enabled: bool,
-    is_names_displayed: bool,
-    is_tracks_displayed: bool,
-    track_step: chrono::Duration,
     new_default_obj_index: usize,
 }
 
@@ -82,8 +77,8 @@ impl App {
 
         let mut window = Window::new_with_setup(
             APP_NAME,
-            800,
-            600,
+            1024,
+            768,
             CanvasSetup {
                 vsync: true,
                 samples: NumSamples::Four,
@@ -107,10 +102,6 @@ impl App {
             camera: camera,
             state: State::Paused.into(),
             new_layer: None,
-            is_stats_enabled: true,
-            is_names_displayed: false,
-            is_tracks_displayed: false,
-            track_step: chrono::Duration::milliseconds(500),
             new_default_obj_index: 0,
         }
     }
@@ -319,27 +310,17 @@ impl App {
             //     println!("\n\t-- object list --");
             //     self.engine.print_object_list()
             // },
-            Message::Names(msg) => {
-                self.is_names_displayed = !msg.disable;
+            Message::Names(_) => {
+                self.engine.toggle_names();
 
                 Ok(())
             }
-            Message::Tracks(msg) => {
-                self.is_tracks_displayed = !msg.disable;
-
-                if let Some(step) = msg.step {
-                    if step >= chrono::Duration::zero() {
-                        self.track_step = step;
-                    } else {
-                        return Err(Error::VirtualTime(
-                            "track step must be greater than zero".into(),
-                        ));
-                    }
-                }
+            Message::Tracks(msg) => self.handle_tracks_msg(msg),
+            Message::RTree(_) => {
+                self.engine.toggle_rtree();
 
                 Ok(())
-            }
-            Message::RTree(msg) => self.handle_rtree_msg(msg),
+            },
             unexpected => return Err(Error::UnexpectedMessage(unexpected)),
         }
     }
@@ -382,11 +363,10 @@ impl App {
         Ok(())
     }
 
-    fn handle_rtree_msg(&mut self, msg: message::RTree) -> Result<()> {
-        if msg.disable {
-            self.engine.hide_rtree();
-        } else {
-            self.engine.show_rtree();
+    fn handle_tracks_msg(&mut self, msg: message::Tracks) -> Result<()> {
+        match msg.step {
+            Some(step) => self.engine.show_tracks(step),
+            None => self.engine.hide_tracks(),
         }
 
         Ok(())
@@ -556,18 +536,14 @@ impl App {
         Ok(())
     }
 
-    fn draw_stats(&mut self) {
-        if self.is_stats_enabled {
-            self.draw_state_text();
-            self.draw_simulation_stats();
-        }
-    }
-
     fn render_frame(&mut self) {
         self.check_window_opened();
 
         self.window.render_with_camera(&mut self.camera);
-        self.draw_stats();
+
+        self.draw_state_text();
+
+        self.engine.draw_debug_info(&mut self.window, &mut self.camera);
     }
 
     // fn simulate_frame(&mut self) {
@@ -635,18 +611,6 @@ impl App {
         }
     }
 
-    // fn update_session_access_time(&mut self) -> Result<()> {
-    //     if self.real_time.num_milliseconds()
-    //         >= (self.last_session_update_time.num_milliseconds()
-    //             + ACCESS_UPDATE_TIME.num_milliseconds())
-    //     {
-    //         // self.engine.update_session_access_time()?;
-    //         self.last_session_update_time = self.real_time;
-    //     }
-
-    //     Ok(())
-    // }
-
     fn handle_key(&mut self, key: Key, action: Action, modifiers: Modifiers) -> Result<()> {
         match key {
             Key::Space | Key::P if matches![action, Action::Press] => {
@@ -703,75 +667,13 @@ impl App {
 
     fn draw_state_text(&mut self) {
         let state = *shared_access![self.state];
-        self.draw_text(
+        self.engine.scene_mut().draw_text(
+            &mut self.window,
             format!("{}", state).as_ref(),
             Point2::origin(),
             Color::new(1.0, 1.0, 1.0),
         );
     }
-
-    fn draw_simulation_stats(&mut self) {
-        let pos = Point2::new(0.0, 150.0);
-
-        let mut stats_text = String::new();
-
-        writeln!(&mut stats_text, "frame #{}", self.engine.frame()).unwrap();
-
-        writeln!(
-            &mut stats_text,
-            "virtual time: {}",
-            TimeFormat::VirtualTimeLong(self.engine.virtual_time())
-        )
-        .unwrap();
-
-        writeln!(
-            &mut stats_text,
-            "virtual time step: {}",
-            TimeFormat::VirtualTimeShort(self.engine.virtual_step())
-        )
-        .unwrap();
-
-        writeln!(
-            &mut stats_text,
-            "frame delta time: {}",
-            TimeFormat::FrameDelta(self.engine.last_frame_delta())
-        )
-        .unwrap();
-
-        writeln!(
-            &mut stats_text,
-            "frame avg ms: {}",
-            self.engine.frame_avg_time_ms()
-        )
-        .unwrap();
-
-        self.draw_text(&stats_text, pos, Color::new(1.0, 0.0, 1.0));
-    }
-
-    fn draw_text(&mut self, text: &str, pos: Point2<f32>, color: Color) {
-        let scale = 75.0;
-        let font = Font::default();
-
-        self.window.draw_text(text, &pos, scale, &font, &color);
-    }
-
-    // fn draw_track(window: &mut Window, color: &Point3<f32>, track: &Track, step: chrono::Duration) {
-    //     let mut next_time = track.time_start() + step;
-
-    //     let mut last_location = *shared_access![track.node_start()].atom_start().location();
-    //     while track.computed_range().contains(&next_time) {
-    //         let new_location = track.interpolate(&next_time).unwrap();
-
-    //         window.draw_line(
-    //             &Point3::from(last_location),
-    //             &Point3::from(new_location),
-    //             color
-    //         );
-
-    //         next_time = next_time + step;
-    //         last_location = new_location;
-    //     }
-    // }
 }
 
 fn print_object_info(object: &Object, coord: &GenCoord) {
