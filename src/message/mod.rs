@@ -210,18 +210,21 @@ messages! {
         pub name: ObjectName
     }
 
-    #[cli(name = "names", about = "enable/disable scene's actors' names visualization")]
+    #[cli(name = "names", about = "show/hide scene's actors' names visualization")]
     message Names {}
 
-    #[cli(name = "tracks", about = "enable/disable objects' tracks visualization")]
+    #[cli(name = "tracks", about = "show/hide objects' tracks visualization")]
     message Tracks {
         /// Set track step
         #[structopt(short, long, parse(try_from_str = cli::parse_time))]
         pub step: Option<chrono::Duration>
     }
 
-    #[cli(name = "rtree", about = "enable/disable R-tree visualization")]
+    #[cli(name = "rtree", about = "show/hide R-tree visualization")]
     message RTree {}
+
+    #[cli(name = "stats", about = "show/hide statistics rendering")]
+    message Stats {}
 
     submessages {
         Layer(layer::Message)

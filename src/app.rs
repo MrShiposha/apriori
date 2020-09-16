@@ -321,6 +321,11 @@ impl App {
 
                 Ok(())
             },
+            Message::Stats(_) => {
+                self.engine.toggle_stats();
+
+                Ok(())
+            }
             unexpected => return Err(Error::UnexpectedMessage(unexpected)),
         }
     }

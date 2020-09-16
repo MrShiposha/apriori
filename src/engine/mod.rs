@@ -226,6 +226,10 @@ impl Engine {
         self.debug_info_settings.names = !self.debug_info_settings.names;
     }
 
+    pub fn toggle_stats(&mut self) {
+        self.debug_info_settings.sim_stats = !self.debug_info_settings.sim_stats;
+    }
+
     fn draw_simulation_stats(&mut self, window: &mut Window) {
         use std::fmt::Write;
 
