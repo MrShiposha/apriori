@@ -158,9 +158,9 @@ CREATE OR REPLACE FUNCTION {schema_name}.range_locations(
 
     out_vcx real, -- vx after collision
     out_vcy real, -- vy after collision
-    out_vcz real, -- vz after collision
+    out_vcz real -- vz after collision
 
-    out_collision_partners bigint[]
+    -- out_collision_partners bigint[]
 )
 AS $$
     BEGIN
@@ -168,10 +168,9 @@ AS $$
         SELECT DISTINCT ON (object_fk_id, t)
             location_id,
             object_fk_id,
-            t, x, y, z, vx, vy, vz, vcx, vcy, vcz,
-            COALESCE(c_partners.partners_array, '{{}}')
+            t, x, y, z, vx, vy, vz, vcx, vcy, vcz
+            -- COALESCE(c_partners.partners_array, '{{}}')
         FROM {schema_name}.location
-        -- INNER JOIN {schema_name}.query_layers_info(active_layer_id, in_start_time, in_stop_time) layers_info
         INNER JOIN {schema_name}.query_object_layers_info(
             active_layer_id,
             object_fk_id,
@@ -181,12 +180,12 @@ AS $$
         ) layers_info
             ON layer_fk_id = layers_info.layer_id
             AND t BETWEEN layers_info.layer_start_time AND layers_info.layer_stop_time
-        LEFT OUTER JOIN (
-            SELECT location_fk_id, array_agg(partner_fk_id) AS partners_array
-            FROM {schema_name}.collision_partners
-            GROUP BY location_fk_id
-        ) c_partners
-            ON c_partners.location_fk_id = location_id
+        -- LEFT OUTER JOIN (
+        --     SELECT location_fk_id, array_agg(partner_fk_id) AS partners_array
+        --     FROM {schema_name}.collision_partners
+        --     GROUP BY location_fk_id
+        -- ) c_partners
+        --     ON c_partners.location_fk_id = location_id
         ORDER BY object_fk_id, t, location_id DESC;
     END
 $$ LANGUAGE plpgsql;

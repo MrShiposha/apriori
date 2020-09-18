@@ -38,28 +38,51 @@ pub fn ranged_secant(
     let mut min = valid_range.start;
     let mut max = valid_range.end;
 
+    if f(min)*f(max) >= 0.0 {
+        return None;
+    }
+
     let mut diff = max - min;
-    let mut f_min = f(min);
-    let mut f_max = f(max);
-    let mut scale = diff / (f_max - f_min);
+    while diff.abs() >= eps {
+        let mid = (max + min) / 2.0;
+        let f_mid = f(mid);
 
-    while diff.abs() > eps {
-        min = max - scale * f_max;
-        max = min + scale * f_min;
-        diff = max - min;
-        f_min = f(min);
-        f_max = f(max);
-
-        scale = diff / (f_max - f_min);
-
-        if !valid_range.contains(&max) {
-            return None;
+        if f_mid <= eps {
+            return Some(mid);
+        } else if f_mid * f(min) < 0.0 {
+            max = mid;
+        } else {
+            min = mid;
         }
+
+        diff = max - min;
     }
 
-    if f_max.abs() <= eps {
-        Some(max)
-    } else {
-        None
-    }
+
+
+    // let mut f_min = f(min);
+    // let mut f_max = f(max);
+    // let mut scale = diff / (f_max - f_min);
+
+    // while diff.abs() > eps {
+    //     min = max - scale * f_max;
+    //     max = min + scale * f_min;
+    //     diff = max - min;
+    //     f_min = f(min);
+    //     f_max = f(max);
+
+    //     scale = diff / (f_max - f_min);
+
+    //     if !valid_range.contains(&max) {
+    //         return None;
+    //     }
+    // }
+
+    // if f_max.abs() <= eps {
+    //     Some(max)
+    // } else {
+    //     None
+    // }
+
+    None
 }

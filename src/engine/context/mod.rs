@@ -1,10 +1,11 @@
 use {
     crate::{
-        engine::{actor::Actor, math},
+        engine::{actor::Actor, math, phys::*},
         r#type::{
-            Coord, IntoStorageDuration, LayerId, LocationId, ObjectId, ObjectName,
-            RelativeTime, SessionId, Vector,
+            Coord, IntoStorageDuration, LayerId, ObjectId, ObjectName,
+            RelativeTime, AsRelativeTime, AsAbsoluteTime, SessionId, LocationId, Vector,
         },
+        object::GenCoord,
         storage::StorageManager,
         Error, Result,
     },
@@ -12,12 +13,13 @@ use {
     log::info,
     lr_tree::*,
     std::{
-        collections::HashMap,
-        sync::{mpsc, Arc},
+        collections::{HashMap, HashSet},
+        sync::{mpsc, Arc, RwLock, RwLockReadGuard},
     },
+    rayon::prelude::*,
 };
 
-mod db_util;
+pub mod db_util;
 pub mod time_range;
 
 pub use time_range::*;
@@ -48,10 +50,25 @@ pub struct TrackPartInfo {
     pub collision_info: Option<CollisionInfo>,
 }
 
+impl TrackPartInfo {
+    pub fn new(object_id: ObjectId, lhs_coord: &GenCoord, rhs_coord: &GenCoord, final_velocity: Option<Vector>) -> Self {
+        let collision_info = final_velocity.map(|v| CollisionInfo { final_velocity: v });
+
+        Self {
+            object_id,
+            start_location: lhs_coord.location().clone(),
+            end_location: rhs_coord.location().clone(),
+            start_velocity: lhs_coord.velocity().clone(),
+            end_velocity: rhs_coord.velocity().clone(),
+            collision_info
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CollisionInfo {
     pub final_velocity: Vector,
-    pub partners_ids: Vec<TrackPartId>,
+    // pub partners_ids: Vec<TrackPartId>,
 }
 
 pub struct Context {
@@ -114,7 +131,6 @@ impl Context {
     }
 
     pub fn location(
-        &self,
         mbr: &MBR<Coord>,
         track_part_info: &TrackPartInfo,
         t: RelativeTime,
@@ -130,6 +146,49 @@ impl Context {
         );
 
         location
+    }
+
+    pub fn cancel_tracks_except(&self, from: RelativeTime, except: HashSet<ObjectId>) {
+        // TODO optimize -- add collision graph
+
+        let to = self.tracks_tree().lock_obj_space().get_root_mbr().bounds(0).max;
+
+        let mbr = mbr![t = [from; to]];
+
+        self.tracks_tree.retain(
+            &mbr,
+        |obj_space, id| {
+                let mbr = obj_space.get_data_mbr(id);
+                let track_part_info = obj_space.get_data_payload(id);
+
+                let time_bounds = mbr.bounds(0);
+
+                let max_time = time_bounds.max;
+                let object_id = track_part_info.object_id;
+
+                if except.contains(&object_id) {
+                    max_time <= from
+                } else {
+                    if time_bounds.is_in_bound(&from) {
+                        let actor = self.actor(&object_id);
+                        let start_time = time_bounds.min.as_absolute_time();
+                        let end_time = from.as_absolute_time();
+
+                        let last_gen_coord = GenCoord::new(
+                            start_time,
+                            track_part_info.start_location,
+                            track_part_info.start_velocity
+                        );
+
+                        actor.set_last_gen_coord(
+                            next_gen_coord(&last_gen_coord, end_time - start_time)
+                        );
+                    }
+
+                    false
+                }
+            }
+        );
     }
 
     pub fn replicate(
@@ -260,13 +319,11 @@ impl Context {
         update_kind: UpdateKind,
         _interrupter: mpsc::Receiver<()>,
     ) -> Result<Self> {
-        self.load_content_from_db(storage_mgr, update_kind)?;
+        self.load_content_from_db(storage_mgr.clone(), update_kind)?;
 
-        let arc_self = Arc::new(self);
+        self.compute_tracks(storage_mgr)?;
 
-        // TODO write new objects' locations into the DB
-
-        Arc::try_unwrap(arc_self).map_err(|_| Error::ContextUpdateInterrupted)
+        Ok(self)
     }
 
     fn load_content_from_db(&mut self, storage_mgr: StorageManager, update_kind: UpdateKind) -> Result<()> {
@@ -304,9 +361,9 @@ impl Context {
 
                             out_vcx,
                             out_vcy,
-                            out_vcz,
+                            out_vcz
 
-                            NULLIF(array_to_string(out_collision_partners, ','), '')
+                            -- NULLIF(array_to_string(out_collision_partners, ','), '')
                         FROM
                             {schema_name}.range_locations({layer_id}, {start_time}, {stop_time}, {step_coeff})
                     )
@@ -321,7 +378,7 @@ impl Context {
             .has_headers(false)
             .from_reader(reader);
 
-        let mut collision_partners_map = HashMap::new();
+        // let mut collision_partners_map = HashMap::new();
 
         for result in reader.deserialize() {
             let location_info: LocationInfo = result.map_err(|err| Error::SerializeCSV(err))?;
@@ -330,35 +387,39 @@ impl Context {
             let actor = self.actors.get_mut(&object_id).unwrap();
             match actor.last_gen_coord() {
                 Some(last_coord) => {
-                    actor.set_last_location(make_gen_coord(&location_info));
+                    actor.set_last_gen_coord(make_last_gen_coord(&location_info));
 
                     let time_range = TimeRange::with_bounds(last_coord.time(), location_info.t);
 
-                    let location_id = location_info.location_id;
-                    let collision_partners = location_info.collision_partners.clone();
+                    let _location_id = location_info.location_id;
+                    // let collision_partners = location_info.collision_partners.clone();
                     let track_part_info =
                         make_track_part_info(object_id, last_coord, location_info);
                     let track_part_mbr =
-                        make_track_part_mbr(&time_range, actor.object().radius(), &track_part_info);
+                        make_track_part_mbr(
+                            &time_range,
+                            actor.object().radius(),
+                            &track_part_info
+                        );
 
-                    let track_part_id = self
+                    let _track_part_id = self
                         .tracks_tree
                         .lock_obj_space_write()
                         .make_data_node(track_part_info, track_part_mbr);
 
-                    if !collision_partners.is_empty() {
-                        collision_partners_map
-                            .insert(location_id, (track_part_id, collision_partners));
-                    }
+                    // if !collision_partners.is_empty() {
+                    //     collision_partners_map
+                    //         .insert(location_id, (track_part_id, collision_partners));
+                    // }
                 }
                 None => {
-                    let initial_location = make_gen_coord(&location_info);
-                    actor.set_last_location(initial_location);
+                    let initial_location = make_last_gen_coord(&location_info);
+                    actor.set_last_gen_coord(initial_location);
                 }
             }
         }
 
-        self.fix_collision_partners(collision_partners_map);
+        // self.fix_collision_partners(collision_partners_map);
 
         self.rebuild_rtree();
 
@@ -381,23 +442,232 @@ impl Context {
         Ok(())
     }
 
-    fn fix_collision_partners(
-        &mut self,
-        collision_partners_map: HashMap<LocationId, (TrackPartId, Vec<LocationId>)>,
-    ) {
-        for (_, (track_part_id, db_partners_ids)) in collision_partners_map.iter() {
-            self.tracks_tree
-                .access_object_mut(*track_part_id, |track_part, _| {
-                    let collision_partners_ids = db_partners_ids
-                        .iter()
-                        .map(|id| collision_partners_map.get(id).unwrap())
-                        .map(|(track_part_id, _)| *track_part_id)
-                        .collect();
+    // fn fix_collision_partners(
+    //     &mut self,
+    //     collision_partners_map: HashMap<LocationId, (TrackPartId, Vec<LocationId>)>,
+    // ) {
+    //     for (_, (track_part_id, db_partners_ids)) in collision_partners_map.iter() {
+    //         self.tracks_tree
+    //             .access_object_mut(*track_part_id, |track_part, _| {
+    //                 let collision_partners_ids = db_partners_ids
+    //                     .iter()
+    //                     .map(|id| collision_partners_map.get(id).unwrap())
+    //                     .map(|(track_part_id, _)| *track_part_id)
+    //                     .collect();
 
-                    track_part.collision_info.as_mut().unwrap().partners_ids =
-                        collision_partners_ids
-                })
+    //                 track_part.collision_info.as_mut().unwrap().partners_ids =
+    //                     collision_partners_ids
+    //             })
+    //     }
+    // }
+
+    fn compute_tracks(&mut self, storage_mgr: StorageManager) -> Result<()> {
+        #[derive(Clone)]
+        struct Inserter {
+            collisions: Arc<RwLock<CollisionGraph>>
         }
+
+        impl Inserter {
+            pub fn new() -> Self {
+                Self {
+                    collisions: Arc::new(RwLock::new(CollisionGraph::new()))
+                }
+            }
+
+            pub fn clear(&self) {
+                self.collisions.write().unwrap().clear();
+            }
+
+            pub fn collisions(&self) -> RwLockReadGuard<CollisionGraph> {
+                self.collisions.read().unwrap()
+            }
+        }
+
+        impl lr_tree::InsertHandler<Coord, TrackPartInfo> for Inserter {
+            fn before_insert(&mut self, obj_space: &TracksSpace, id: TrackPartId) {
+                let object_id = obj_space.get_data_payload(id).object_id;
+                let mbr = obj_space.get_data_mbr(id);
+
+                LRTree::search_access_obj_space(
+                    obj_space,
+                    mbr,
+                    |obj_space, partner_track_id| {
+                        let partner_id = obj_space.get_data_payload(partner_track_id).object_id;
+
+                        if obj_space.is_removed(&partner_track_id)
+                        || partner_id == object_id {
+                            return;
+                        }
+
+                        self.collisions.write().unwrap().add_edge(
+                            ObjectCollision::new(object_id, id),
+                            ObjectCollision::new(partner_id, partner_track_id),
+                            ()
+                        );
+                    }
+                );
+            }
+        }
+
+        let inserter = Inserter::new();
+
+        let mut uncomputed = self.actors().keys().cloned().collect::<Vec<_>>();
+        while !uncomputed.is_empty() {
+            inserter.clear();
+
+            uncomputed = uncomputed.into_par_iter()
+                .filter_map(|object_id| {
+                    let mut inserter = inserter.clone();
+
+                    let actor = self.actor(&object_id);
+                    let last_coord = match actor.last_gen_coord() {
+                        Some(coord) => coord,
+                        None => return None,
+                    };
+
+                    let next_coord = next_gen_coord(
+                        &last_coord,
+                        actor.object().compute_step()
+                    );
+
+                    let track_part_info = TrackPartInfo::new(
+                        object_id,
+                        &last_coord,
+                        &next_coord,
+                        None
+                    );
+
+                    let time_range = TimeRange::with_bounds(
+                        last_coord.time(),
+                        next_coord.time()
+                    );
+
+                    let mbr = make_track_part_mbr(
+                        &time_range,
+                        actor.object().radius(),
+                        &track_part_info
+                    );
+
+                    actor.set_last_gen_coord(next_coord);
+
+                    self.tracks_tree().insert_transaction(
+                        track_part_info,
+                        mbr,
+                        &mut inserter
+                    );
+
+                    if time_range.end() > self.time_range().end() {
+                        None
+                    } else {
+                        Some(object_id)
+                    }
+                })
+                .collect();
+
+            let collisions = inserter.collisions();
+
+            let groups = petgraph::algo::tarjan_scc(&*collisions);
+            let collision_info = groups.into_iter()
+                .map(|group| {
+                    find_collision_group(
+                        self,
+                        &*collisions,
+                        group
+                    )
+                })
+                .filter(|(_, group)| group.edge_count() != 0)
+                .min_by(|(lhs_t, _), (rhs_t, _)| lhs_t.partial_cmp(&rhs_t).unwrap());
+
+            if let Some((t, group)) = collision_info {
+                compute_collisions(self, t, group);
+            }
+        }
+
+        let obj_space = self.tracks_tree.lock_obj_space().clone_shrinked();
+        self.tracks_tree = LRTree::with_obj_space(obj_space);
+        self.rebuild_rtree();
+
+        self.update_db(storage_mgr)?;
+
+        for (_, actor) in self.actors.iter_mut() {
+            if let Some(last_coord) = actor.last_gen_coord() {
+                actor.set_last_computed_time(last_coord.time());
+            }
+        }
+
+        Ok(())
+    }
+
+    fn update_db(&self, storage_mgr: StorageManager) -> Result<()> {
+        let mut connection = storage_mgr.pool.get()?;
+        let writer = connection.copy_in(
+            query!["COPY {schema_name}.location(
+                object_fk_id,
+                layer_fk_id,
+                t,
+                x,
+                y,
+                z,
+                vx,
+                vy,
+                vz,
+                vcx,
+                vcy,
+                vcz
+            ) FROM stdin WITH (FORCE_NULL(vcx, vcy, vcz), FORMAT CSV)"]
+        ).unwrap();
+
+        let mut writer = csv::WriterBuilder::new()
+            .quote_style(csv::QuoteStyle::NonNumeric)
+            .from_writer(writer);
+
+        let mbr = mbr![
+            t = [self.time_range.start().as_relative_time(); self.time_range.end().as_relative_time()]
+        ];
+
+        self.tracks_tree.search_access(
+            &mbr,
+            |obj_space, id| {
+                let mbr = obj_space.get_data_mbr(id);
+                let track_part = obj_space.get_data_payload(id);
+
+                let actor = self.actor(&track_part.object_id);
+
+                let vc = match track_part.collision_info {
+                    Some(ref info) => [
+                            Some(info.final_velocity[0]),
+                            Some(info.final_velocity[1]),
+                            Some(info.final_velocity[2])
+                        ],
+                    None => [None, None, None],
+                };
+
+                if actor.last_computed_time().as_relative_time() < mbr.bounds(0).max {
+                    let location_info = LocationInfo {
+                        object_id: track_part.object_id,
+                        location_id: LocationId::default(),
+                        layer_id: self.layer_id,
+                        t: mbr.bounds(0).max.as_absolute_time(),
+                        x: mbr.bounds(1).max,
+                        y: mbr.bounds(2).max,
+                        z: mbr.bounds(3).max,
+                        vx: track_part.end_velocity[0],
+                        vy: track_part.end_velocity[1],
+                        vz: track_part.end_velocity[2],
+                        vcx: vc[0],
+                        vcy: vc[1],
+                        vcz: vc[2],
+                    };
+
+                    writer.serialize(location_info).expect("update DB");
+                }
+            }
+        );
+
+        let writer = writer.into_inner().expect("unwrap CSV writer");
+        writer.finish().expect("DB writer finish");
+
+        Ok(())
     }
 
     fn rebuild_rtree(&self) {
@@ -413,24 +683,24 @@ impl Context {
 
 pub enum UpdateKind {
     Initial(TimeRange),
-    Forward(TimeRange),
-    Backward(TimeRange)
+    // Forward(TimeRange),
+    // Backward(TimeRange)
 }
 
 impl UpdateKind {
     fn as_step_coeff(&self) -> i16 {
         match self {
             UpdateKind::Initial(_) => 0,
-            UpdateKind::Forward(_) => 1,
-            UpdateKind::Backward(_) => -1,
+            // UpdateKind::Forward(_) => 1,
+            // UpdateKind::Backward(_) => -1,
         }
     }
 
     fn time_range(&self) -> &TimeRange {
         match self {
             UpdateKind::Initial(tr) => tr,
-            UpdateKind::Forward(tr) => tr,
-            UpdateKind::Backward(tr) => tr,
+            // UpdateKind::Forward(tr) => tr,
+            // UpdateKind::Backward(tr) => tr,
         }
     }
 }

@@ -4,14 +4,16 @@ use {
         graphics,
         object::{GenCoord, Object},
         r#type::{
-            AsRelativeTime, Coord, Distance, IntoRustDuration, LocationId, ObjectId, RawTime,
-            Vector,
+            AsRelativeTime, Coord, Distance, IntoRustDuration, IntoStorageDuration, LocationId, ObjectId, RawTime,
+            Vector, LayerId,
         },
     },
     lr_tree::*,
     serde::{
-        de::{SeqAccess, Visitor},
+        Serialize, Serializer,
         Deserialize, Deserializer,
+        ser::SerializeTuple,
+        de::{SeqAccess, Visitor},
     },
 };
 
@@ -19,6 +21,7 @@ const OBJECT_FIELDS_LEN: usize = 6;
 const LOCATION_INFO_FIELDS_LEN: usize = 12;
 
 pub struct LocationInfo {
+    pub layer_id: LayerId,
     pub location_id: LocationId,
     pub object_id: ObjectId,
     pub t: chrono::Duration,
@@ -33,7 +36,37 @@ pub struct LocationInfo {
     pub vcy: Option<Coord>, // vy after collision
     pub vcz: Option<Coord>, // vz after collision
 
-    pub collision_partners: Vec<LocationId>,
+    // pub collision_partners: Vec<LocationId>,
+}
+
+impl LocationInfo {
+    pub fn is_after_collision(&self) -> bool {
+        self.vcx.is_some()
+    }
+}
+
+impl Serialize for LocationInfo {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer
+    {
+        let mut tuple_seq = serializer.serialize_tuple(LOCATION_INFO_FIELDS_LEN)?;
+
+        tuple_seq.serialize_element(&self.object_id)?;
+        tuple_seq.serialize_element(&self.layer_id)?;
+        tuple_seq.serialize_element(&self.t.into_storage_duration())?;
+        tuple_seq.serialize_element(&self.x)?;
+        tuple_seq.serialize_element(&self.y)?;
+        tuple_seq.serialize_element(&self.z)?;
+        tuple_seq.serialize_element(&self.vx)?;
+        tuple_seq.serialize_element(&self.vy)?;
+        tuple_seq.serialize_element(&self.vz)?;
+        tuple_seq.serialize_element(&self.vcx)?;
+        tuple_seq.serialize_element(&self.vcy)?;
+        tuple_seq.serialize_element(&self.vcz)?;
+
+        tuple_seq.end()
+    }
 }
 
 impl<'de> Deserialize<'de> for LocationInfo {
@@ -66,9 +99,10 @@ impl<'de> Deserialize<'de> for LocationInfo {
                 let vcx = seq.next_element().unwrap_or(None);
                 let vcy = seq.next_element().unwrap_or(None);
                 let vcz = seq.next_element().unwrap_or(None);
-                let collision_partners = seq.next_element().unwrap_or(Some(vec![])).unwrap();
+                // let collision_partners = seq.next_element().unwrap_or(Some(vec![])).unwrap();
 
                 let location_info = LocationInfo {
+                    layer_id: LayerId::default(),
                     location_id,
                     object_id,
                     t,
@@ -81,7 +115,7 @@ impl<'de> Deserialize<'de> for LocationInfo {
                     vcx,
                     vcy,
                     vcz,
-                    collision_partners,
+                    // collision_partners,
                 };
 
                 Ok(location_info)
@@ -132,10 +166,16 @@ impl<'de> Deserialize<'de> for ObjectInfo {
     }
 }
 
-pub fn make_gen_coord(location_info: &LocationInfo) -> GenCoord {
+pub fn make_last_gen_coord(location_info: &LocationInfo) -> GenCoord {
     let time = location_info.t;
     let location = Vector::new(location_info.x, location_info.y, location_info.z);
-    let velocity = Vector::new(location_info.vx, location_info.vy, location_info.vz);
+    let velocity;
+
+    if location_info.is_after_collision() {
+        velocity = Vector::new(location_info.vcx.unwrap(), location_info.vcy.unwrap(), location_info.vcz.unwrap(),);
+    } else {
+        velocity = Vector::new(location_info.vx, location_info.vy, location_info.vz);
+    }
 
     GenCoord::new(time, location, velocity)
 }
@@ -146,18 +186,18 @@ pub fn make_track_part_info(
     location_info: LocationInfo,
 ) -> TrackPartInfo {
     let collision_info;
-    if location_info.collision_partners.is_empty() {
+    // if location_info.collision_partners.is_empty() {
         collision_info = None;
-    } else {
-        collision_info = Some(CollisionInfo {
-            final_velocity: Vector::new(
-                location_info.vcx.unwrap(),
-                location_info.vcy.unwrap(),
-                location_info.vcz.unwrap(),
-            ),
-            partners_ids: vec![], // must be set externally
-        })
-    }
+    // } else {
+    //     collision_info = Some(CollisionInfo {
+    //         final_velocity: Vector::new(
+    //             location_info.vcx.unwrap(),
+    //             location_info.vcy.unwrap(),
+    //             location_info.vcz.unwrap(),
+    //         ),
+    //         partners_ids: vec![], // must be set externally
+    //     })
+    // }
 
     TrackPartInfo {
         object_id,

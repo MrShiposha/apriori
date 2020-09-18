@@ -79,7 +79,6 @@ impl Scene {
         let mbr = vtime.as_mbr();
         context.tracks_tree().search_access(&mbr, |obj_space, id| {
             let (object_id, location) = Self::location_info(
-                context,
                 t,
                 obj_space,
                 id
@@ -165,7 +164,6 @@ impl Scene {
 
             context.tracks_tree().search_access(&mbr, |obj_space, id| {
                 let (object_id, location) = Self::location_info(
-                    context,
                     begin,
                     obj_space,
                     id
@@ -227,7 +225,7 @@ impl Scene {
         context.tracks_tree().search_access(
             &mbr,
             |obj_space, id| {
-                let (object_id, location) = Self::location_info(context, t, obj_space, id);
+                let (object_id, location) = Self::location_info(t, obj_space, id);
 
                 let world_coord = Point3::new(
                     location[0],
@@ -268,13 +266,13 @@ impl Scene {
         window.draw_text(text, &pos, scale, &font, &color);
     }
 
-    fn location_info(context: &Context, t: RelativeTime, obj_space: &TracksSpace, id: TrackPartId) -> (ObjectId, Vector) {
+    fn location_info(t: RelativeTime, obj_space: &TracksSpace, id: TrackPartId) -> (ObjectId, Vector) {
         let track_part_mbr = obj_space.get_data_mbr(id);
         let track_part_info = obj_space.get_data_payload(id);
 
         let object_id = track_part_info.object_id;
 
-        let location = context.location(
+        let location = Context::location(
             track_part_mbr,
             track_part_info,
             t,

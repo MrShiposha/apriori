@@ -18,6 +18,7 @@ use {
 
 pub mod actor;
 pub mod context;
+pub mod phys;
 pub mod math;
 pub mod scene;
 
@@ -57,6 +58,7 @@ pub struct Engine {
     frame_count: usize,
     target_time_range: Option<TimeRange>,
     wait_for_new_context: bool,
+    is_context_change_spawned: bool,
     debug_info_settings: DebugInfoSettings,
 }
 
@@ -81,6 +83,7 @@ impl Engine {
             frame_count: 0,
             target_time_range: None,
             wait_for_new_context: false,
+            is_context_change_spawned: false,
             debug_info_settings: DebugInfoSettings {
                 tracks: None,
                 names: false,
@@ -125,7 +128,8 @@ impl Engine {
             self.virtual_time = self.virtual_time + chrono::Duration::nanoseconds(real_step);
             self.scene.set_time(&self.context, self.virtual_time);
 
-            if self.context().time_range().ratio(self.virtual_time) >= CONTEXT_CHANGE_RATIO {
+            if !self.is_context_change_spawned
+            && self.context().time_range().ratio(self.virtual_time) >= CONTEXT_CHANGE_RATIO {
                 self.spawn_context_change(
                     self.context().session_id(),
                     self.context().layer_id(),
@@ -612,6 +616,8 @@ impl Engine {
         new_layer_id: LayerId,
         mut new_time_range: TimeRange,
     ) -> Result<()> {
+        self.is_context_change_spawned = true;
+
         if let Ok(_) = self.context_upd_intrp.send(()) {
             trace! {
                 target: LOG_TARGET,
@@ -682,7 +688,6 @@ impl Engine {
         self.scene.set_time(&context, self.virtual_time);
 
         self.context = Arc::new(context);
-        self.wait_for_new_context = false;
 
         trace! {
             target: LOG_TARGET,
@@ -695,6 +700,9 @@ impl Engine {
                 self.context.layer_id(),
                 target_time_range,
             )?;
+        } else {
+            self.wait_for_new_context = false;
+            self.is_context_change_spawned = false;
         }
 
         Ok(())
