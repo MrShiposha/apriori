@@ -335,11 +335,11 @@ impl Context {
         mut self,
         storage_mgr: StorageManager,
         update_kind: UpdateKind,
-        _interrupter: mpsc::Receiver<()>,
+        interrupter: mpsc::Receiver<()>,
     ) -> Result<Self> {
         self.load_content_from_db(storage_mgr.clone(), update_kind)?;
 
-        self.compute_tracks(storage_mgr)?;
+        self.compute_tracks(storage_mgr, interrupter)?;
 
         Ok(self)
     }
@@ -479,7 +479,7 @@ impl Context {
     //     }
     // }
 
-    fn compute_tracks(&mut self, storage_mgr: StorageManager) -> Result<()> {
+    fn compute_tracks(&mut self, storage_mgr: StorageManager, interrupter: mpsc::Receiver<()>) -> Result<()> {
         let mut checker = collision::CollisionChecker::new();
 
         let mut uncomputed = self.actors().keys().cloned().collect::<HashSet<_>>();
@@ -558,6 +558,15 @@ impl Context {
             }
 
             checker.clear();
+
+            if let Ok(_) = interrupter.try_recv() {
+                info! {
+                    target: LOG_TARGET,
+                    "computing was interrupted"
+                }
+
+                return Err(Error::ContextUpdateInterrupted);
+            }
         }
 
         let obj_space = self.tracks_tree.lock_obj_space().clone_shrinked();
