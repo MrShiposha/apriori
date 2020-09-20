@@ -255,7 +255,8 @@ pub fn find_collision_group(
     (min_collision_time, collision_graph)
 }
 
-pub fn compute_collisions(context: &Context, t: RelativeTime, graph: CollisionGraph) {
+/// Returns all ids of objects with canceled tracks.
+pub fn compute_collisions(context: &Context, t: RelativeTime, graph: CollisionGraph) -> HashSet<ObjectId> {
     let mut collision_vectors = collision::CollisionVectors::new();
     let mut collision_ids = HashSet::new();
 
@@ -303,7 +304,7 @@ pub fn compute_collisions(context: &Context, t: RelativeTime, graph: CollisionGr
         collision_vectors.set_final_velocity(context, &lhs, t, final_velocity);
     }
 
-    context.cancel_tracks_except(t, collision_ids);
+    let canceled_objects_ids = context.cancel_tracks_except(t, collision_ids);
 
     let collision_vectors = collision_vectors.into_iter();
     for (object_id, (path, final_velocity)) in collision_vectors  {
@@ -340,6 +341,8 @@ pub fn compute_collisions(context: &Context, t: RelativeTime, graph: CollisionGr
 
         actor.set_last_gen_coord(last_gen_coord);
     }
+
+    canceled_objects_ids
 }
 
 fn compute_central_collision_velocity(

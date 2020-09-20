@@ -140,7 +140,10 @@ impl Context {
         location
     }
 
-    pub fn cancel_tracks_except(&self, from: RelativeTime, except: HashSet<ObjectId>) {
+    /// Returns all ids of objects that were changed.
+    pub fn cancel_tracks_except(&self, from: RelativeTime, except: HashSet<ObjectId>) -> HashSet<ObjectId> {
+        let mut changed = HashSet::new();
+
         let to = self.tracks_tree().lock_obj_space().get_root_mbr().bounds(0).max;
 
         let mbr = mbr![t = [from; to]];
@@ -159,6 +162,8 @@ impl Context {
 
                 let max_time = time_bounds.max;
                 let object_id = track_part_info.object_id;
+
+                changed.insert(object_id);
 
                 if except.contains(&object_id) {
                     max_time <= from
@@ -200,6 +205,8 @@ impl Context {
                 }
             }
         );
+
+        changed
     }
 
     pub fn replicate(
@@ -475,7 +482,7 @@ impl Context {
     fn compute_tracks(&mut self, storage_mgr: StorageManager) -> Result<()> {
         let mut checker = collision::CollisionChecker::new();
 
-        let mut uncomputed = self.actors().keys().cloned().collect::<Vec<_>>();
+        let mut uncomputed = self.actors().keys().cloned().collect::<HashSet<_>>();
         while !uncomputed.is_empty() {
             let arc_checker = Arc::new(RwLock::new(checker));
 
@@ -545,7 +552,9 @@ impl Context {
                 .min_by(|(lhs_t, _), (rhs_t, _)| lhs_t.partial_cmp(&rhs_t).unwrap());
 
             if let Some((t, group)) = collision_info {
-                compute_collisions(self, t, group);
+                let changed_ids = compute_collisions(self, t, group);
+
+                uncomputed.extend(changed_ids);
             }
 
             checker.clear();

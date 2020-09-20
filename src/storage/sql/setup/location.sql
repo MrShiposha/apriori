@@ -91,6 +91,7 @@ AS $$
                 FROM {schema_name}.location
                 INNER JOIN active_objects o
                     ON object_fk_id = o.object_id
+                WHERE location.layer_fk_id=active_layer_id
                 GROUP BY object_fk_id
             ) AS is_min_obj_computed
         );

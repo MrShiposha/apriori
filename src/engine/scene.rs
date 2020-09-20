@@ -154,6 +154,10 @@ impl Scene {
         let step = track_step.as_relative_time();
 
         let tracks_tree = context.tracks_tree().lock_obj_space();
+        if tracks_tree.is_empty() {
+            return;
+        }
+
         let tracks_mbr = tracks_tree.get_root_mbr();
         let mut begin = tracks_mbr.bounds(0).min;
         let end = tracks_mbr.bounds(0).max;
