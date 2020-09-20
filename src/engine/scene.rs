@@ -66,6 +66,7 @@ impl Scene {
                     self.create_rtree(new_context);
                 } else {
                     rtree.unlink();
+                    self.rtree = None;
                 }
             }
             _ => {}

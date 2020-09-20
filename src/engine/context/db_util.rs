@@ -1,6 +1,6 @@
 use {
     crate::{
-        engine::context::{CollisionInfo, TimeRange, TrackPartInfo},
+        engine::context::{TimeRange, TrackPartInfo},
         graphics,
         object::{GenCoord, Object},
         r#type::{
@@ -35,8 +35,6 @@ pub struct LocationInfo {
     pub vcx: Option<Coord>, // vx after collision
     pub vcy: Option<Coord>, // vy after collision
     pub vcz: Option<Coord>, // vz after collision
-
-    // pub collision_partners: Vec<LocationId>,
 }
 
 impl LocationInfo {
@@ -99,7 +97,6 @@ impl<'de> Deserialize<'de> for LocationInfo {
                 let vcx = seq.next_element().unwrap_or(None);
                 let vcy = seq.next_element().unwrap_or(None);
                 let vcz = seq.next_element().unwrap_or(None);
-                // let collision_partners = seq.next_element().unwrap_or(Some(vec![])).unwrap();
 
                 let location_info = LocationInfo {
                     layer_id: LayerId::default(),
@@ -115,7 +112,6 @@ impl<'de> Deserialize<'de> for LocationInfo {
                     vcx,
                     vcy,
                     vcz,
-                    // collision_partners,
                 };
 
                 Ok(location_info)
@@ -185,19 +181,17 @@ pub fn make_track_part_info(
     last_coord: GenCoord,
     location_info: LocationInfo,
 ) -> TrackPartInfo {
-    let collision_info;
-    // if location_info.collision_partners.is_empty() {
-        collision_info = None;
-    // } else {
-    //     collision_info = Some(CollisionInfo {
-    //         final_velocity: Vector::new(
-    //             location_info.vcx.unwrap(),
-    //             location_info.vcy.unwrap(),
-    //             location_info.vcz.unwrap(),
-    //         ),
-    //         partners_ids: vec![], // must be set externally
-    //     })
-    // }
+    let final_velocity = if !location_info.is_after_collision() {
+        None
+    } else {
+        Some(
+            Vector::new(
+                location_info.vcx.unwrap(),
+                location_info.vcy.unwrap(),
+                location_info.vcz.unwrap(),
+            )
+        )
+    };
 
     TrackPartInfo {
         object_id,
@@ -205,7 +199,7 @@ pub fn make_track_part_info(
         end_location: Vector::new(location_info.x, location_info.y, location_info.z),
         start_velocity: last_coord.velocity().clone(),
         end_velocity: Vector::new(location_info.vx, location_info.vy, location_info.vz),
-        collision_info,
+        final_velocity,
     }
 }
 
@@ -230,6 +224,8 @@ pub fn make_track_part_mbr(
 
     let time_start = time_range.start().as_relative_time();
     let time_end = time_range.end().as_relative_time();
+
+    debug_assert_ne!(time_start, time_end);
 
     let start_location = local_track_part_info.start_location;
     let end_location = local_track_part_info.end_location;

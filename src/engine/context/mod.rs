@@ -14,7 +14,7 @@ use {
     lr_tree::*,
     std::{
         collections::{HashMap, HashSet},
-        sync::{mpsc, Arc, RwLock, RwLockReadGuard},
+        sync::{mpsc, Arc, RwLock},
     },
     rayon::prelude::*,
 };
@@ -47,28 +47,20 @@ pub struct TrackPartInfo {
     pub end_location: Vector,
     pub start_velocity: Vector,
     pub end_velocity: Vector,
-    pub collision_info: Option<CollisionInfo>,
+    pub final_velocity: Option<Vector>,
 }
 
 impl TrackPartInfo {
     pub fn new(object_id: ObjectId, lhs_coord: &GenCoord, rhs_coord: &GenCoord, final_velocity: Option<Vector>) -> Self {
-        let collision_info = final_velocity.map(|v| CollisionInfo { final_velocity: v });
-
         Self {
             object_id,
             start_location: lhs_coord.location().clone(),
             end_location: rhs_coord.location().clone(),
             start_velocity: lhs_coord.velocity().clone(),
             end_velocity: rhs_coord.velocity().clone(),
-            collision_info
+            final_velocity,
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct CollisionInfo {
-    pub final_velocity: Vector,
-    // pub partners_ids: Vec<TrackPartId>,
 }
 
 pub struct Context {
@@ -149,15 +141,17 @@ impl Context {
     }
 
     pub fn cancel_tracks_except(&self, from: RelativeTime, except: HashSet<ObjectId>) {
-        // TODO optimize -- add collision graph
-
         let to = self.tracks_tree().lock_obj_space().get_root_mbr().bounds(0).max;
 
         let mbr = mbr![t = [from; to]];
 
-        self.tracks_tree.retain(
+        self.tracks_tree.retain_mut(
             &mbr,
         |obj_space, id| {
+                if obj_space.is_removed(&id) {
+                    return false;
+                }
+
                 let mbr = obj_space.get_data_mbr(id);
                 let track_part_info = obj_space.get_data_payload(id);
 
@@ -174,18 +168,35 @@ impl Context {
                         let start_time = time_bounds.min.as_absolute_time();
                         let end_time = from.as_absolute_time();
 
+                        let time_range = TimeRange::with_bounds(start_time, end_time);
+
+                        let track_part_info = obj_space.get_data_payload_mut(id);
+
                         let last_gen_coord = GenCoord::new(
                             start_time,
                             track_part_info.start_location,
                             track_part_info.start_velocity
                         );
 
-                        actor.set_last_gen_coord(
-                            next_gen_coord(&last_gen_coord, end_time - start_time)
-                        );
-                    }
+                        let next_gen_coord = next_gen_coord(&last_gen_coord, time_range.length());
 
-                    false
+                        track_part_info.end_location = next_gen_coord.location().clone();
+                        track_part_info.end_velocity = next_gen_coord.velocity().clone();
+
+                        let new_mbr = make_track_part_mbr(
+                            &time_range,
+                            actor.object().radius(),
+                            track_part_info
+                        );
+
+                        obj_space.set_data_mbr(id, new_mbr);
+
+                        actor.set_last_gen_coord(next_gen_coord);
+
+                        true
+                    } else {
+                        false
+                    }
                 }
             }
         );
@@ -462,62 +473,15 @@ impl Context {
     // }
 
     fn compute_tracks(&mut self, storage_mgr: StorageManager) -> Result<()> {
-        #[derive(Clone)]
-        struct Inserter {
-            collisions: Arc<RwLock<CollisionGraph>>
-        }
-
-        impl Inserter {
-            pub fn new() -> Self {
-                Self {
-                    collisions: Arc::new(RwLock::new(CollisionGraph::new()))
-                }
-            }
-
-            pub fn clear(&self) {
-                self.collisions.write().unwrap().clear();
-            }
-
-            pub fn collisions(&self) -> RwLockReadGuard<CollisionGraph> {
-                self.collisions.read().unwrap()
-            }
-        }
-
-        impl lr_tree::InsertHandler<Coord, TrackPartInfo> for Inserter {
-            fn before_insert(&mut self, obj_space: &TracksSpace, id: TrackPartId) {
-                let object_id = obj_space.get_data_payload(id).object_id;
-                let mbr = obj_space.get_data_mbr(id);
-
-                LRTree::search_access_obj_space(
-                    obj_space,
-                    mbr,
-                    |obj_space, partner_track_id| {
-                        let partner_id = obj_space.get_data_payload(partner_track_id).object_id;
-
-                        if obj_space.is_removed(&partner_track_id)
-                        || partner_id == object_id {
-                            return;
-                        }
-
-                        self.collisions.write().unwrap().add_edge(
-                            ObjectCollision::new(object_id, id),
-                            ObjectCollision::new(partner_id, partner_track_id),
-                            ()
-                        );
-                    }
-                );
-            }
-        }
-
-        let inserter = Inserter::new();
+        let mut checker = collision::CollisionChecker::new();
 
         let mut uncomputed = self.actors().keys().cloned().collect::<Vec<_>>();
         while !uncomputed.is_empty() {
-            inserter.clear();
+            let arc_checker = Arc::new(RwLock::new(checker));
 
             uncomputed = uncomputed.into_par_iter()
                 .filter_map(|object_id| {
-                    let mut inserter = inserter.clone();
+                    let mut checker = Arc::clone(&arc_checker);
 
                     let actor = self.actor(&object_id);
                     let last_coord = match actor.last_gen_coord() {
@@ -553,7 +517,7 @@ impl Context {
                     self.tracks_tree().insert_transaction(
                         track_part_info,
                         mbr,
-                        &mut inserter
+                        &mut checker
                     );
 
                     if time_range.end() > self.time_range().end() {
@@ -564,14 +528,16 @@ impl Context {
                 })
                 .collect();
 
-            let collisions = inserter.collisions();
+            checker = Arc::try_unwrap(arc_checker).unwrap().into_inner().unwrap();
+
+            let collisions = checker.collisions();
 
             let groups = petgraph::algo::tarjan_scc(&*collisions);
             let collision_info = groups.into_iter()
                 .map(|group| {
                     find_collision_group(
                         self,
-                        &*collisions,
+                        &checker,
                         group
                     )
                 })
@@ -581,6 +547,8 @@ impl Context {
             if let Some((t, group)) = collision_info {
                 compute_collisions(self, t, group);
             }
+
+            checker.clear();
         }
 
         let obj_space = self.tracks_tree.lock_obj_space().clone_shrinked();
@@ -633,11 +601,11 @@ impl Context {
 
                 let actor = self.actor(&track_part.object_id);
 
-                let vc = match track_part.collision_info {
-                    Some(ref info) => [
-                            Some(info.final_velocity[0]),
-                            Some(info.final_velocity[1]),
-                            Some(info.final_velocity[2])
+                let vc = match track_part.final_velocity {
+                    Some(ref vel) => [
+                            Some(vel[0]),
+                            Some(vel[1]),
+                            Some(vel[2])
                         ],
                     None => [None, None, None],
                 };
@@ -648,9 +616,9 @@ impl Context {
                         location_id: LocationId::default(),
                         layer_id: self.layer_id,
                         t: mbr.bounds(0).max.as_absolute_time(),
-                        x: mbr.bounds(1).max,
-                        y: mbr.bounds(2).max,
-                        z: mbr.bounds(3).max,
+                        x: track_part.end_location[0],
+                        y: track_part.end_location[1],
+                        z: track_part.end_location[2],
                         vx: track_part.end_velocity[0],
                         vy: track_part.end_velocity[1],
                         vz: track_part.end_velocity[2],
