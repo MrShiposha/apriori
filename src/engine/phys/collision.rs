@@ -2,14 +2,14 @@ use {
     std::{
         collections::{HashMap, hash_map::Entry},
         cmp::Ordering,
+        hash::{Hash, Hasher},
         sync::{Arc, RwLock}
     },
     crate::{
-        r#type::{ObjectId, Vector, RelativeTime, Coord},
+        r#type::{ObjectId, Vector, AsAbsoluteTime, RelativeTime, Coord},
         object::GenCoord,
         engine::{
             context::{Context, TrackPartId, TrackPartInfo, TracksSpace},
-            phys::ObjectCollision,
         },
     },
     petgraph::graphmap::UnGraphMap,
@@ -17,8 +17,100 @@ use {
 };
 
 pub type TrackPartIdx = usize;
+pub type CollisionGraph = UnGraphMap<ObjectCollision, ()>;
 pub type PossibleCollisionsGraph = UnGraphMap<ObjectId, ()>;
 pub type PossibleCollisionsGroup = Vec<ObjectId>;
+
+pub struct CollisionPair(pub ObjectId, pub ObjectId);
+
+impl Hash for CollisionPair {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let CollisionPair(mut lhs, mut rhs) = self;
+
+        if lhs > rhs {
+            std::mem::swap(&mut lhs, &mut rhs);
+        }
+
+        lhs.hash(state);
+        rhs.hash(state);
+    }
+}
+
+impl PartialEq for CollisionPair {
+    fn eq(&self, other: &Self) -> bool {
+        let strait_eq = self.0 == other.0 && self.1 == other.1;
+        let reverse_eq = self.0 == other.1 && self.1 == other.0;
+
+        strait_eq || reverse_eq
+    }
+}
+
+impl Eq for CollisionPair {}
+
+#[derive(Clone, Copy)]
+pub struct ObjectCollision {
+    pub object_id: ObjectId,
+    pub track_part_id: TrackPartId,
+}
+
+impl ObjectCollision {
+    pub fn new(object_id: ObjectId, track_part_id: TrackPartId) -> Self {
+        Self {
+            object_id,
+            track_part_id
+        }
+    }
+
+    pub fn path(&self, context: &Context, t: RelativeTime) -> CollidingGenCoords {
+        let last_gen_coord = self.last_gen_coord(context);
+
+        let step = t.as_absolute_time() - last_gen_coord.time();
+        CollidingGenCoords {
+            start: last_gen_coord.clone(),
+            end: super::next_gen_coord(&last_gen_coord, step)
+        }
+    }
+
+    fn last_gen_coord(&self, context: &Context) -> GenCoord {
+        let obj_space = context.tracks_tree().lock_obj_space();
+
+        let mbr = obj_space.get_data_mbr(self.track_part_id);
+        let track_part_info = obj_space.get_data_payload(self.track_part_id);
+
+        let last_t = mbr.bounds(0).min.as_absolute_time();
+        GenCoord::new(
+            last_t,
+            track_part_info.start_location,
+            track_part_info.start_velocity
+        )
+    }
+}
+
+impl PartialEq for ObjectCollision {
+    fn eq(&self, other: &Self) -> bool {
+        self.object_id.eq(&other.object_id)
+    }
+}
+
+impl Eq for ObjectCollision {}
+
+impl PartialOrd for ObjectCollision {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.object_id.partial_cmp(&other.object_id)
+    }
+}
+
+impl Ord for ObjectCollision {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.object_id.cmp(&other.object_id)
+    }
+}
+
+impl Hash for ObjectCollision {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.object_id.hash(state);
+    }
+}
 
 #[derive(Debug)]
 pub struct CollisionChecker {

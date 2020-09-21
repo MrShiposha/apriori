@@ -1,113 +1,20 @@
 use {
     crate::{
-        engine::{math, context::{Context, TrackPartId, TrackPartInfo, db_util::make_track_part_mbr, TimeRange}},
+        engine::{math, context::{Context, TrackPartInfo, db_util::make_track_part_mbr, TimeRange}},
         object::{GenCoord},
-        r#type::{ObjectId, Vector, Mass, AsRelativeTime, AsAbsoluteTime, RelativeTime}
+        r#type::{ObjectId, Vector, Mass, AsRelativeTime, RelativeTime}
     },
     std::{
         ops::Range,
-        hash::{Hash, Hasher},
         collections::{HashSet},
     },
-    petgraph::{graphmap::UnGraphMap},
     approx::abs_diff_eq
 };
 
 pub mod collision;
-
-pub type CollisionGraph = UnGraphMap<ObjectCollision, ()>;
+use collision::*;
 
 const EPS: f32 = 0.0001;
-pub struct CollisionPair(ObjectId, ObjectId);
-
-impl Hash for CollisionPair {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        let CollisionPair(mut lhs, mut rhs) = self;
-
-        if lhs > rhs {
-            std::mem::swap(&mut lhs, &mut rhs);
-        }
-
-        lhs.hash(state);
-        rhs.hash(state);
-    }
-}
-
-impl PartialEq for CollisionPair {
-    fn eq(&self, other: &Self) -> bool {
-        let strait_eq = self.0 == other.0 && self.1 == other.1;
-        let reverse_eq = self.0 == other.1 && self.1 == other.0;
-
-        strait_eq || reverse_eq
-    }
-}
-
-impl Eq for CollisionPair {}
-
-#[derive(Clone, Copy)]
-pub struct ObjectCollision {
-    object_id: ObjectId,
-    track_part_id: TrackPartId,
-}
-
-impl ObjectCollision {
-    pub fn new(object_id: ObjectId, track_part_id: TrackPartId) -> Self {
-        Self {
-            object_id,
-            track_part_id
-        }
-    }
-
-    pub fn path(&self, context: &Context, t: RelativeTime) -> collision::CollidingGenCoords {
-        let last_gen_coord = self.last_gen_coord(context);
-
-        let step = t.as_absolute_time() - last_gen_coord.time();
-        collision::CollidingGenCoords {
-            start: last_gen_coord.clone(),
-            end: next_gen_coord(&last_gen_coord, step)
-        }
-    }
-
-    fn last_gen_coord(&self, context: &Context) -> GenCoord {
-        let obj_space = context.tracks_tree().lock_obj_space();
-
-        let mbr = obj_space.get_data_mbr(self.track_part_id);
-        let track_part_info = obj_space.get_data_payload(self.track_part_id);
-
-        let last_t = mbr.bounds(0).min.as_absolute_time();
-        GenCoord::new(
-            last_t,
-            track_part_info.start_location,
-            track_part_info.start_velocity
-        )
-    }
-}
-
-impl PartialEq for ObjectCollision {
-    fn eq(&self, other: &Self) -> bool {
-        self.object_id.eq(&other.object_id)
-    }
-}
-
-impl Eq for ObjectCollision {}
-
-impl PartialOrd for ObjectCollision {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.object_id.partial_cmp(&other.object_id)
-    }
-}
-
-impl Ord for ObjectCollision {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.object_id.cmp(&other.object_id)
-    }
-}
-
-impl Hash for ObjectCollision {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.object_id.hash(state);
-    }
-}
 
 pub fn acceleration(location: &Vector, velocity: &Vector) -> Vector {
     let rvec = location.norm();
@@ -157,8 +64,8 @@ fn next_gen_coord_helper(location: &Vector, velocity: &Vector, step: RelativeTim
 
 pub fn find_collision_group(
     context: &Context,
-    checker: &collision::CollisionChecker,
-    mut group: collision::PossibleCollisionsGroup
+    checker: &CollisionChecker,
+    mut group: PossibleCollisionsGroup
 ) -> (RelativeTime, CollisionGraph) {
     let mut min_collision_time = RelativeTime::INFINITY;
 
@@ -234,7 +141,7 @@ pub fn find_collision_group(
 
 /// Returns all ids of objects with canceled tracks.
 pub fn compute_collisions(context: &Context, t: RelativeTime, graph: CollisionGraph) -> HashSet<ObjectId> {
-    let mut collision_vectors = collision::CollisionVectors::new();
+    let mut collision_vectors = CollisionVectors::new();
     let mut collision_ids = HashSet::new();
 
     for lhs in graph.nodes() {
@@ -285,7 +192,7 @@ pub fn compute_collisions(context: &Context, t: RelativeTime, graph: CollisionGr
 
     let collision_vectors = collision_vectors.into_iter();
     for (object_id, (path, final_velocity)) in collision_vectors  {
-        let collision::CollidingGenCoords {
+        let CollidingGenCoords {
             start,
             end
         } = path;
