@@ -480,10 +480,11 @@ impl Context {
     // }
 
     fn compute_tracks(&mut self, storage_mgr: StorageManager, interrupter: mpsc::Receiver<()>) -> Result<()> {
+        let mut is_interrupted = false;
         let mut checker = collision::CollisionChecker::new();
 
         let mut uncomputed = self.actors().keys().cloned().collect::<HashSet<_>>();
-        while !uncomputed.is_empty() {
+        while !uncomputed.is_empty() && !is_interrupted {
             let arc_checker = Arc::new(RwLock::new(checker));
 
             uncomputed = uncomputed.into_par_iter()
@@ -562,10 +563,10 @@ impl Context {
             if let Ok(_) = interrupter.try_recv() {
                 info! {
                     target: LOG_TARGET,
-                    "computing was interrupted"
+                    "the old context update was interrupted"
                 }
 
-                return Err(Error::ContextUpdateInterrupted);
+                is_interrupted = true;
             }
         }
 
@@ -581,7 +582,20 @@ impl Context {
             }
         }
 
-        Ok(())
+        if let Ok(_) = interrupter.try_recv() {
+            info! {
+                target: LOG_TARGET,
+                "the old context update was interrupted"
+            }
+
+            is_interrupted = true;
+        }
+
+        if is_interrupted {
+            Err(Error::ContextUpdateInterrupted)
+        } else {
+            Ok(())
+        }
     }
 
     fn update_db(&self, storage_mgr: StorageManager) -> Result<()> {
