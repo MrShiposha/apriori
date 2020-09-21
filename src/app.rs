@@ -304,7 +304,11 @@ impl App {
             Message::GetSession(_) => self.print_current_session_name(),
             Message::NewSession(msg) => self.engine.new_session(msg.name),
             Message::SaveSession(msg) => self.engine.save_session(msg.name),
-            Message::LoadSession(msg) => self.engine.load_session(msg.name),
+            Message::LoadSession(msg) => {
+                self.new_default_obj_index = (self.engine.load_session(msg.name)? + 1) as usize;
+
+                Ok(())
+            },
             Message::RenameSession(msg) => self.engine.rename_session(msg.old_name, msg.new_name),
             Message::DeleteSession(msg) => self.engine.delete_session(msg.name),
             // Message::RenameObject(msg) if state.is_run() => self.handle_rename_object(msg),

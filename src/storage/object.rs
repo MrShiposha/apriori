@@ -61,6 +61,16 @@ impl<'t, 'storage> Object<'t, 'storage> {
             .map_err(map_err!(Error::Storage::Object))
     }
 
+    pub fn get_max_object_default_name_num(&mut self, session_id: SessionId) -> Result<i64> {
+        self.transaction
+            .query_one(
+                query!["SELECT {schema_name}.last_object_default_name_num($1)"],
+                &[&session_id]
+            )
+            .map(|row| row.get(0))
+            .map_err(map_err!(Error::Storage::Object))
+    }
+
     // pub fn get_last_object_id(&mut self, session_id: SessionId) -> Result<ObjectId> {
     //     self.transaction
     //         .query_one(

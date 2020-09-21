@@ -524,7 +524,10 @@ impl Engine {
         Ok(())
     }
 
-    pub fn load_session(&mut self, session_name: SessionName) -> Result<()> {
+    /// Returns max object's default name number
+    pub fn load_session(&mut self, session_name: SessionName) -> Result<i64> {
+        let num;
+
         transaction! {
             self.storage_mgr => t {
                 let mut session = t.session();
@@ -536,10 +539,12 @@ impl Engine {
                     new_layer_id,
                     Some(self.context.session_id())
                 )?;
+
+                num = t.object().get_max_object_default_name_num(new_session_id)?;
             }
         }
 
-        Ok(())
+        Ok(num)
     }
 
     pub fn rename_session(

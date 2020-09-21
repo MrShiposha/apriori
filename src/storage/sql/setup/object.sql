@@ -127,3 +127,30 @@ CREATE OR REPLACE FUNCTION {schema_name}.current_objects_delta(
         );
     END
 $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION {schema_name}.last_object_default_name_num(
+    session_id integer
+) RETURNS bigint
+AS $$
+    BEGIN
+        RETURN (
+            SELECT
+                MAX(
+                    CASE
+                        WHEN max_default_name_num~E'^\\d+$' THEN
+                            max_default_name_num::bigint
+                        ELSE
+                            -1
+                    END
+                )
+            FROM (
+                SELECT
+                    SUBSTRING(object_name, 8) as max_default_name_num -- len('object-')
+                FROM
+                    {schema_name}.object
+                WHERE
+                    session_fk_id=session_id
+            ) as str_name_nums
+        );
+    END
+$$ LANGUAGE plpgsql;
