@@ -6,7 +6,7 @@ use {
             TimeFormat, Color,
         },
         storage::{self, StorageManager, StorageTransaction},
-        transaction, Error, Result,
+        transaction, Result,
     },
     kiss3d::{scene::SceneNode, window::Window, camera::Camera},
     lazy_static::lazy_static,
@@ -57,7 +57,6 @@ pub struct Engine {
     frames_sum_time_ms: usize,
     frame_count: usize,
     target_time_range: Option<TimeRange>,
-    wait_for_new_context: bool,
     is_context_change_spawned: bool,
     debug_info_settings: DebugInfoSettings,
 }
@@ -82,7 +81,6 @@ impl Engine {
             frames_sum_time_ms: 0,
             frame_count: 0,
             target_time_range: None,
-            wait_for_new_context: false,
             is_context_change_spawned: false,
             debug_info_settings: DebugInfoSettings {
                 tracks: None,
@@ -102,19 +100,6 @@ impl Engine {
     pub fn advance_time(&mut self, frame_delta_ns: i128, advance_virtual_time: bool) -> Result<()> {
         match self.context_recv.try_recv() {
             Ok(new_context) => self.set_new_context(new_context)?,
-            Err(mpsc::TryRecvError::Empty) if self.wait_for_new_context => {
-                trace! {
-                    target: LOG_TARGET,
-                    "waiting for a new context"
-                }
-
-                let new_context = self
-                    .context_recv
-                    .recv()
-                    .map_err(|_| Error::ContextUpdateInterrupted)?;
-
-                self.set_new_context(new_context)?;
-            }
             _ => {}
         }
 
@@ -186,7 +171,6 @@ impl Engine {
             vtime = chrono::Duration::zero();
         }
 
-        self.wait_for_new_context = true;
         self.virtual_time = vtime;
 
         if try_current_context && self.context().time_range().contains(vtime) {
@@ -272,6 +256,14 @@ impl Engine {
         .unwrap();
 
         self.scene.draw_text(window, &stats_text, pos, Color::new(1.0, 0.0, 1.0));
+
+        if self.is_context_change_spawned {
+            let upd_text = format!("*UPDATING CONTEXT*");
+
+            let pos = Point2::new(pos[0], pos[1] + 450.0);
+
+            self.scene.draw_text(window, &upd_text, pos, Color::new(1.0, 1.0, 0.0));
+        }
     }
 
     pub fn scene_mut(&mut self) -> &mut Scene {
@@ -489,8 +481,6 @@ impl Engine {
     }
 
     fn select_layer_helper(&mut self, layer_id: LayerId) -> Result<()> {
-        self.wait_for_new_context = true;
-
         self.spawn_context_change(
             self.context.session_id(),
             layer_id,
@@ -605,8 +595,6 @@ impl Engine {
             session.unlock(old_session_id)?;
         }
 
-        self.wait_for_new_context = true;
-
         self.spawn_context_change(new_session_id, new_layer_id, TimeRange::default())
     }
 
@@ -695,15 +683,14 @@ impl Engine {
         }
 
         if let Some(target_time_range) = self.target_time_range.take() {
-            self.spawn_context_change(
+            return self.spawn_context_change(
                 self.context.session_id(),
                 self.context.layer_id(),
                 target_time_range,
-            )?;
-        } else {
-            self.wait_for_new_context = false;
-            self.is_context_change_spawned = false;
+            );
         }
+
+        self.is_context_change_spawned = false;
 
         Ok(())
     }

@@ -135,8 +135,6 @@ impl App {
             self.engine.advance_time(frame_delta_ns, advance_vtime)?;
         }
 
-        // cli.join();
-
         Ok(())
     }
 
@@ -164,7 +162,12 @@ impl App {
 
                 Ok(())
             }
-            Message::ListObjects(_) => self.list_new_layer_objects(),
+            Message::ListObjects(_) => {
+                self.list_new_layer_objects()?;
+                self.list_current_objects()?;
+
+                Ok(())
+            },
             Message::ObjectInfo(msg) => {
                 let layer = self.new_layer.as_ref().unwrap();
 
@@ -304,12 +307,8 @@ impl App {
             Message::LoadSession(msg) => self.engine.load_session(msg.name),
             Message::RenameSession(msg) => self.engine.rename_session(msg.old_name, msg.new_name),
             Message::DeleteSession(msg) => self.engine.delete_session(msg.name),
-            // Message::AddObject(msg) if state.is_run() => self.handle_add_object(msg),
             // Message::RenameObject(msg) if state.is_run() => self.handle_rename_object(msg),
-            // Message::ListObjects(_) => {
-            //     println!("\n\t-- object list --");
-            //     self.engine.print_object_list()
-            // },
+            Message::ListObjects(_) => self.list_current_objects(),
             Message::Names(_) => {
                 self.engine.toggle_names();
 
@@ -360,9 +359,21 @@ impl App {
     fn list_new_layer_objects(&self) -> Result<()> {
         let layer = self.new_layer.as_ref().unwrap();
 
+        println!();
         println!(" --- layer \"{}\" objects ---", layer.name());
         for (object, _) in layer.iter_objects() {
             println!("\t{}", object.name());
+        }
+
+        Ok(())
+    }
+
+    fn list_current_objects(&self) -> Result<()> {
+        println!();
+        println!(" --- current objects ---");
+
+        for (_, actor) in self.engine.context().actors() {
+            println!("\t{}", actor.object().name());
         }
 
         Ok(())
@@ -550,55 +561,6 @@ impl App {
 
         self.engine.draw_debug_info(&mut self.window, &mut self.camera);
     }
-
-    // fn simulate_frame(&mut self) {
-    // self.scene_mgr.query_objects_by_time(
-    //     &mut self.engine,
-    //     &self.virtual_time,
-    //     {
-    //         let is_names_displayed = self.is_names_displayed;
-    //         let is_tracks_displayed = self.is_tracks_displayed;
-    //         let track_step = self.track_step;
-
-    //         let window = &mut self.window;
-    //         let window_size = Vector2::new(window.width() as f32, window.height() as f32);
-    //         let hidpi_factor = window.hidpi_factor() as f32;
-    //         let text_size = 85.0;
-    //         let half_text_size = text_size / 2.0;
-    //         let quarter_text_size = half_text_size / 2.0;
-    //         let font = Font::default();
-
-    //         let camera = &mut self.camera;
-
-    //         move |object, location| {
-    //             if is_names_displayed {
-    //                 let mut text_location = camera.project(
-    //                     &Point3::from(location),
-    //                     &window_size
-    //                 ).scale(hidpi_factor) - Vector2::new(quarter_text_size, -half_text_size);
-    //                 text_location[1] = window_size[1] * hidpi_factor - text_location[1];
-
-    //                 window.draw_text(
-    //                     format!("+ {}", object.name()).as_ref(),
-    //                     &Point2::from(text_location),
-    //                     text_size,
-    //                     &font,
-    //                     &graphics::opposite_color(object.color())
-    //                 );
-    //             }
-
-    //             if is_tracks_displayed {
-    //                 Self::draw_track(
-    //                     window,
-    //                     &Point3::from(*object.color()),
-    //                     object.track(),
-    //                     track_step
-    //                 );
-    //             }
-    //         }
-    //     }
-    // );
-    // }
 
     fn handle_window_events(&mut self) {
         for event in self.window.events().iter() {
