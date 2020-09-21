@@ -5,10 +5,9 @@ use {
         r#type::{ObjectId, Vector, Mass, AsRelativeTime, AsAbsoluteTime, RelativeTime}
     },
     std::{
-        sync::Arc,
         ops::Range,
         hash::{Hash, Hasher},
-        collections::{HashSet, HashMap, hash_map::Entry},
+        collections::{HashSet},
     },
     petgraph::{graphmap::UnGraphMap},
     approx::abs_diff_eq
@@ -17,7 +16,6 @@ use {
 pub mod collision;
 
 pub type CollisionGraph = UnGraphMap<ObjectCollision, ()>;
-// pub type CollisionGroup = Vec<ObjectCollision>;
 
 const EPS: f32 = 0.0001;
 pub struct CollisionPair(ObjectId, ObjectId);
@@ -183,15 +181,6 @@ pub fn find_collision_group(
             let rhs_radius = context.actor(&rhs).object().radius();
             let radius_sum = lhs_radius + rhs_radius;
 
-            // let lhs_track_part = obj_space.get_data_payload(lhs.track_part_id);
-            // let rhs_track_part = obj_space.get_data_payload(rhs.track_part_id);
-
-            // let lhs_mbr = obj_space.get_data_mbr(lhs.track_part_id);
-            // let rhs_mbr = obj_space.get_data_mbr(rhs.track_part_id);
-
-            // let lhs_bounds = lhs_mbr.bounds(0);
-            // let rhs_bounds = rhs_mbr.bounds(0);
-
             let lhs_path = checker.path(lhs);
             let rhs_path = checker.path(rhs);
 
@@ -204,18 +193,6 @@ pub fn find_collision_group(
                 valid_range,
                 EPS,
                 |t| {
-                    // let lhs_location = Context::location(
-                    //     lhs_mbr,
-                    //     lhs_track_part,
-                    //     t
-                    // );
-
-                    // let rhs_location = Context::location(
-                    //     rhs_mbr,
-                    //     rhs_track_part,
-                    //     t
-                    // );
-
                     let obj_space = &*obj_space;
 
                     let lhs_part_idx = lhs_path.track_part_idx(obj_space, t);
