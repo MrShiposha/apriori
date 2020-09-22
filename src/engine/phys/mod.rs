@@ -19,12 +19,14 @@ const EPS: f32 = 0.0001;
 pub fn acceleration(location: &Vector, velocity: &Vector) -> Vector {
     let rvec = location.norm();
 
-    let limit = 30.0;
+    let limit = 12.0;
+    let velocity = velocity.norm();
+    let shift = Vector::new(1.0, 0.0, 0.0).scale(velocity * 0.3);
 
     if rvec > limit {
-        -location.normalize().scale(velocity.norm() * 0.20)
+        -location.normalize().scale(velocity * 0.5) + shift
     } else if rvec > 0.0 {
-        location.normalize().scale(velocity.norm() * 0.25)
+        location.normalize().scale(velocity * 0.3) - shift
     } else {
         Vector::zeros()
     }

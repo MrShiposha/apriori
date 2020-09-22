@@ -2,6 +2,7 @@ use {
     crate::{
         engine::{actor::Actor, math, phys::*},
         r#type::{
+            TimeFormat,
             Coord, IntoStorageDuration, LayerId, ObjectId, ObjectName,
             RelativeTime, AsRelativeTime, AsAbsoluteTime, SessionId, LocationId, Vector,
         },
@@ -10,7 +11,7 @@ use {
         Error, Result,
     },
     itertools::Itertools,
-    log::info,
+    log::{trace, info},
     lr_tree::*,
     std::{
         collections::{HashMap, HashSet},
@@ -61,6 +62,13 @@ impl TrackPartInfo {
             final_velocity,
         }
     }
+}
+
+#[derive(Clone)]
+pub struct ContextChangeParams {
+    pub session_id: SessionId,
+    pub layer_id: LayerId,
+    pub time_range: TimeRange,
 }
 
 pub struct Context {
@@ -150,7 +158,7 @@ impl Context {
 
         self.tracks_tree.retain_mut(
             &mbr,
-        |obj_space, id| {
+            |obj_space, id| {
                 if obj_space.is_removed(&id) {
                     return false;
                 }
@@ -514,6 +522,14 @@ impl Context {
                         next_coord.time()
                     );
 
+                    trace! {
+                        target: LOG_TARGET,
+                        "object \"{}\": new track, t = [{}; {}]",
+                        actor.object().name(),
+                        TimeFormat::VirtualTimeShort(time_range.start()),
+                        TimeFormat::VirtualTimeShort(time_range.end()),
+                    }
+
                     let mbr = make_track_part_mbr(
                         &time_range,
                         actor.object().radius(),
@@ -537,6 +553,9 @@ impl Context {
                 .collect();
 
             checker = Arc::try_unwrap(arc_checker).unwrap().into_inner().unwrap();
+            checker.load_tracks(
+                &*self.tracks_tree().lock_obj_space()
+            );
 
             let collisions = checker.collisions();
 

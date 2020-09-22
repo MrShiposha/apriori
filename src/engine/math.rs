@@ -43,6 +43,8 @@ pub fn golden_section_search(
         mut end
     } = valid_range;
 
+    debug_assert!(start < end);
+
     let mut diff = end - start;
     if diff.abs() <= eps {
         return (start + end) / 2.0;
@@ -74,6 +76,8 @@ pub fn golden_section_search(
         }
     }
 
+    debug_assert!(start < end);
+
     (start + end) / 2.0
 }
 
@@ -87,6 +91,8 @@ pub fn bisection(
         mut end
     } = valid_range;
 
+    debug_assert!(start < end);
+
     if f(start)*f(end) > 0.0 {
         return None;
     }
@@ -97,6 +103,7 @@ pub fn bisection(
         let f_mid = f(mid);
 
         if f_mid <= eps {
+            debug_assert!(start < end);
             return Some(mid);
         } else if f_mid * f(start) < 0.0 {
             end = mid;

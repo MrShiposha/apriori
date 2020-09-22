@@ -22,13 +22,13 @@ pub mod phys;
 pub mod math;
 pub mod scene;
 
-use context::{Context, TimeRange};
+use context::{Context, TimeRange, ContextChangeParams};
 use scene::Scene;
 
 const CONNECTION_STRING: &'static str = "host=localhost user=postgres";
 const LOG_TARGET: &'static str = "engine";
 
-const CONTEXT_CHANGE_RATIO: f32 = 0.75;
+const CONTEXT_CHANGE_RATIO: f32 = 0.6;
 
 lazy_static! {
     static ref ACCESS_UPDATE_TIME: chrono::Duration = chrono::Duration::seconds(30);
@@ -56,7 +56,7 @@ pub struct Engine {
     last_frame_delta: chrono::Duration,
     frames_sum_time_ms: usize,
     frame_count: usize,
-    target_time_range: Option<TimeRange>,
+    context_change_params: Option<ContextChangeParams>,
     is_context_change_spawned: bool,
     debug_info_settings: DebugInfoSettings,
 }
@@ -80,7 +80,7 @@ impl Engine {
             last_frame_delta: chrono::Duration::zero(),
             frames_sum_time_ms: 0,
             frame_count: 0,
-            target_time_range: None,
+            context_change_params: None,
             is_context_change_spawned: false,
             debug_info_settings: DebugInfoSettings {
                 tracks: None,
@@ -100,6 +100,9 @@ impl Engine {
     pub fn advance_time(&mut self, frame_delta_ns: i128, advance_virtual_time: bool) -> Result<()> {
         match self.context_recv.try_recv() {
             Ok(new_context) => self.set_new_context(new_context)?,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.start_context_change()?;
+            }
             _ => {}
         }
 
@@ -115,11 +118,11 @@ impl Engine {
 
             if !self.is_context_change_spawned
             && self.context().time_range().ratio(self.virtual_time) >= CONTEXT_CHANGE_RATIO {
-                self.spawn_context_change(
+                self.schedule_context_change(
                     self.context().session_id(),
                     self.context().layer_id(),
                     TimeRange::with_default_len(self.virtual_time),
-                )?;
+                );
             }
         }
 
@@ -166,7 +169,7 @@ impl Engine {
         &mut self,
         mut vtime: chrono::Duration,
         try_current_context: bool,
-    ) -> Result<()> {
+    ) {
         if vtime < chrono::Duration::zero() {
             vtime = chrono::Duration::zero();
         }
@@ -176,14 +179,14 @@ impl Engine {
         if try_current_context && self.context().time_range().contains(vtime) {
             self.scene.set_time(self.context.as_ref(), vtime);
 
-            return Ok(());
+            return;
         }
 
-        self.spawn_context_change(
+        self.schedule_context_change(
             self.context().session_id(),
             self.context().layer_id(),
             TimeRange::with_default_len(vtime),
-        )
+        );
     }
 
     pub fn virtual_step(&self) -> chrono::Duration {
@@ -293,7 +296,9 @@ impl Engine {
             }
         }
 
-        self.select_layer_helper(new_layer_id)
+        self.select_layer_helper(new_layer_id);
+
+        Ok(())
     }
 
     pub fn is_object_exists(&mut self, object_name: &ObjectName) -> Result<bool> {
@@ -473,19 +478,24 @@ impl Engine {
             self.storage_mgr => t {
                 let layer_id = t.layer().get_layer_id(self.context.session_id(), layer_name)?;
 
-                self.select_layer_helper(layer_id)?;
+                self.select_layer_helper(layer_id);
             }
         }
 
         Ok(())
     }
 
-    fn select_layer_helper(&mut self, layer_id: LayerId) -> Result<()> {
-        self.spawn_context_change(
+    fn select_layer_helper(&mut self, layer_id: LayerId) {
+        // self.spawn_context_change(
+        //     self.context.session_id(),
+        //     layer_id,
+        //     self.context().time_range().clone(),
+        // )
+        self.schedule_context_change(
             self.context.session_id(),
             layer_id,
             self.context().time_range().clone(),
-        )
+        );
     }
 
     pub fn get_session_name(&mut self) -> Result<SessionName> {
@@ -600,17 +610,18 @@ impl Engine {
             session.unlock(old_session_id)?;
         }
 
-        self.spawn_context_change(new_session_id, new_layer_id, TimeRange::default())
+        // self.spawn_context_change(new_session_id, new_layer_id, TimeRange::default())
+        self.schedule_context_change(new_session_id, new_layer_id, TimeRange::default());
+
+        Ok(())
     }
 
-    fn spawn_context_change(
+    fn schedule_context_change(
         &mut self,
-        new_session_id: SessionId,
-        new_layer_id: LayerId,
-        mut new_time_range: TimeRange,
-    ) -> Result<()> {
-        self.is_context_change_spawned = true;
-
+        session_id: SessionId,
+        layer_id: LayerId,
+        time_range: TimeRange
+    ) {
         if let Ok(_) = self.context_upd_intrp.send(()) {
             trace! {
                 target: LOG_TARGET,
@@ -618,19 +629,47 @@ impl Engine {
             }
         }
 
+        let change_params = ContextChangeParams {
+            session_id,
+            layer_id,
+            time_range,
+        };
+
+        self.context_change_params = Some(change_params);
+    }
+
+    fn start_context_change(&mut self) -> Result<()> {
+        if self.context_change_params.is_none() {
+            return Ok(());
+        }
+
+        let mut change_params = self.context_change_params.clone().unwrap();
+
+        if change_params.session_id == self.context.session_id()
+        && change_params.layer_id == self.context.layer_id()
+        && change_params.time_range == self.context.time_range().clone() {
+            self.context_change_params = None;
+
+            return Ok(());
+        }
+
+        trace! {
+            target: LOG_TARGET,
+            "start context change"
+        }
+
+        self.is_context_change_spawned = true;
+
         let min_valid_start_time;
         transaction! {
             self.storage_mgr => t {
                 min_valid_start_time = t.location()
-                    .get_min_valid_start_time(new_layer_id, new_time_range.start())?;
+                    .get_min_valid_start_time(change_params.layer_id, change_params.time_range.start())?;
             }
         }
 
-        if min_valid_start_time >= new_time_range.start() {
-            self.target_time_range = None;
-        } else {
-            self.target_time_range = Some(new_time_range);
-            new_time_range = TimeRange::with_default_len(min_valid_start_time);
+        if min_valid_start_time < change_params.time_range.start() {
+            change_params.time_range = TimeRange::with_default_len(min_valid_start_time);
         }
 
         let (ctx_sender, ctx_recv) = mpsc::channel();
@@ -644,9 +683,9 @@ impl Engine {
 
         rayon::spawn(move || {
             let (new_context, update_kind) = context.replicate(
-                new_session_id,
-                new_layer_id,
-                new_time_range
+                change_params.session_id,
+                change_params.layer_id,
+                change_params.time_range
             );
 
             if let Ok(new_context) = new_context.update_content(
@@ -687,13 +726,13 @@ impl Engine {
             "context is changed"
         }
 
-        if let Some(target_time_range) = self.target_time_range.take() {
-            return self.spawn_context_change(
-                self.context.session_id(),
-                self.context.layer_id(),
-                target_time_range,
-            );
-        }
+        // if let Some(target_time_range) = self.target_time_range.take() {
+        //     return self.spawn_context_change(
+        //         self.context.session_id(),
+        //         self.context.layer_id(),
+        //         target_time_range,
+        //     );
+        // }
 
         self.is_context_change_spawned = false;
 

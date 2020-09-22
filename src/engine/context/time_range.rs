@@ -1,6 +1,6 @@
 use crate::r#type::AsRelativeTime;
 
-#[derive(Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub struct TimeRange {
     start: chrono::Duration,
     end: chrono::Duration,

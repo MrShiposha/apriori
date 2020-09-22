@@ -531,7 +531,7 @@ impl App {
         match msg.time {
             Some(time) if state.is_run() => {
                 if time >= origin {
-                    self.engine.set_virtual_time(time, false)?;
+                    self.engine.set_virtual_time(time, false);
                 } else {
                     return Err(Error::VirtualTime(
                         "setting virtual time that lower than zero is forbidden".into(),
@@ -540,7 +540,7 @@ impl App {
             }
             None if state.is_run() && msg.origin => {
                 self.engine
-                    .set_virtual_time(chrono::Duration::zero(), false)?;
+                    .set_virtual_time(chrono::Duration::zero(), false);
             }
             None if !msg.origin => println!(
                 "{}",
@@ -596,13 +596,15 @@ impl App {
                 if matches![action, Action::Press] && shared_access![self.state].is_paused() =>
             {
                 let vtime = self.engine.virtual_time() - self.engine.virtual_step();
-                self.engine.set_virtual_time(vtime, true)
+                self.engine.set_virtual_time(vtime, true);
+                Ok(())
             }
             Key::Right
                 if matches![action, Action::Press] && shared_access![self.state].is_paused() =>
             {
                 let vtime = self.engine.virtual_time() + self.engine.virtual_step();
-                self.engine.set_virtual_time(vtime, true)
+                self.engine.set_virtual_time(vtime, true);
+                Ok(())
             }
             Key::C if modifiers.contains(Modifiers::Control) && matches![action, Action::Press] => {
                 self.close();
