@@ -92,7 +92,11 @@ impl Engine {
 
         let session_name = None;
         let old_session_id = None;
+
         engine.new_session_helper(session_name, old_session_id)?;
+        engine.start_context_change()?;
+        let context = engine.context_recv.recv().expect("unable to load initial context");
+        engine.set_new_context(context);
 
         Ok(engine)
     }
