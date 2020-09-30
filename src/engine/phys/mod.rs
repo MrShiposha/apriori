@@ -14,7 +14,7 @@ use {
 pub mod collision;
 use collision::*;
 
-const EPS: f32 = 0.0001;
+const EPS: f32 = 0.00001;
 
 pub fn acceleration(location: &Vector, velocity: &Vector) -> Vector {
     let rvec = location.norm();
@@ -94,13 +94,14 @@ pub fn find_collision_group(
             let rhs_path = checker.path(rhs);
 
             let valid_range = Range {
-                start: lhs_path.min_t().max(rhs_path.min_t()),
-                end: lhs_path.max_t().min(rhs_path.max_t())
+                start: lhs_path.min_t().max(rhs_path.min_t()).max(checker.min_t()),
+                end: lhs_path.max_t().min(rhs_path.max_t()).min(checker.max_t())
             };
 
             let collision_time = math::find_root(
                 valid_range,
                 EPS,
+                EPS * 100.0,
                 |t| {
                     let obj_space = &*obj_space;
 
@@ -199,25 +200,43 @@ pub fn compute_collisions(context: &Context, t: RelativeTime, graph: CollisionGr
             end
         } = path;
 
-        let track_part = TrackPartInfo::new(
-            object_id,
-            &start,
-            &end,
-            Some(final_velocity.clone())
-        );
-
         let actor = context.actor(&object_id);
         let radius = actor.object().radius();
 
-        let time_range = TimeRange::with_bounds(start.time(), end.time());
+        if start.time() == end.time() {
+            use lr_tree::mbr;
 
-        let mbr = make_track_part_mbr(
-            &time_range,
-            radius,
-            &track_part
-        );
+            let ids = context.tracks_tree().search(
+                &mbr![t = [start.time().as_relative_time(); end.time().as_relative_time()]]
+            );
 
-        context.tracks_tree().insert(track_part, mbr);
+            let track_part_id = *ids.iter()
+                .find(|&&id| context.tracks_tree().lock_obj_space().get_data_payload(id).object_id == object_id)
+                .unwrap();
+
+            let mut write = context.tracks_tree().lock_obj_space_write();
+            let track_part = write.get_data_payload_mut(track_part_id);
+            track_part.end_location = end.location().clone();
+            track_part.final_velocity = Some(final_velocity);
+        } else {
+
+            let time_range = TimeRange::with_bounds(start.time(), end.time());
+
+            let track_part = TrackPartInfo::new(
+                object_id,
+                &start,
+                &end,
+                Some(final_velocity.clone())
+            );
+
+            let mbr = make_track_part_mbr(
+                &time_range,
+                radius,
+                &track_part
+            );
+
+            context.tracks_tree().insert(track_part, mbr);
+        }
 
         let last_gen_coord = GenCoord::new(
             end.time(),

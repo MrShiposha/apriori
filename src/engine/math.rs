@@ -35,7 +35,7 @@ pub fn hermite_interpolation(
 
 pub fn golden_section_search(
     valid_range: Range<RelativeTime>,
-    eps: f32,
+    t_eps: f32,
     f: &impl Fn(RelativeTime) -> Distance
 ) -> RelativeTime {
     let Range {
@@ -46,7 +46,7 @@ pub fn golden_section_search(
     debug_assert!(start < end);
 
     let mut diff = end - start;
-    if diff.abs() <= eps {
+    if diff.abs() <= t_eps {
         return (start + end) / 2.0;
     }
 
@@ -56,7 +56,7 @@ pub fn golden_section_search(
     let mut f1 = f(x1);
     let mut f2 = f(x2);
 
-    while diff.abs() > eps {
+    while diff.abs() > t_eps {
         if f1 < f2 {
             end = x2;
             x2 = x1;
@@ -76,14 +76,15 @@ pub fn golden_section_search(
         }
     }
 
-    debug_assert!(start < end);
+    debug_assert!(start <= end, "start: {}, end: {}", start, end);
 
     (start + end) / 2.0
 }
 
 pub fn bisection(
-    valid_range: Range<RelativeTime>,
-    eps: f32,
+    valid_range: &Range<RelativeTime>,
+    t_eps: f32,
+    f_eps: f32,
     f: &impl Fn(RelativeTime) -> Distance,
 ) -> Option<RelativeTime> {
     let Range {
@@ -98,11 +99,11 @@ pub fn bisection(
     }
 
     let mut diff = end - start;
-    while diff.abs() >= eps {
+    while diff.abs() >= t_eps {
         let mid = (start + end) / 2.0;
         let f_mid = f(mid);
 
-        if f_mid <= eps {
+        if f_mid.abs() <= f_eps {
             debug_assert!(start < end);
             return Some(mid);
         } else if f_mid * f(start) < 0.0 {
@@ -119,16 +120,17 @@ pub fn bisection(
 
 pub fn find_root(
     mut valid_range: Range<RelativeTime>,
-    eps: f32,
+    t_eps: f32,
+    f_eps: f32,
     f: impl Fn(RelativeTime) -> Distance,
 ) -> Option<RelativeTime> {
     let min_distance = golden_section_search(
         valid_range.clone(),
-        eps,
+        t_eps,
         &f
     );
 
     valid_range.end = min_distance;
 
-    bisection(valid_range, eps, &f)
+    bisection(&valid_range, t_eps, f_eps, &f)
 }

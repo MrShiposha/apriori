@@ -86,7 +86,7 @@ AS $$
         RETURNING session_id INTO load_session_id;
 
         IF (NOT FOUND) THEN
-            RAISE 'session `%` is either locked or not exist', name;
+            RAISE 'session `%` is either locked or not exists', name;
         END IF;
 
         RETURN load_session_id;
@@ -112,7 +112,7 @@ AS $$
         WHERE session_name = name AND is_locked = false;
 
         IF (NOT FOUND) THEN
-            RAISE 'session `%` is either locked or not exist', name;
+            RAISE 'session `%` is either locked or not exists', name;
         END IF;
     END
 $$ LANGUAGE plpgsql;

@@ -3,6 +3,7 @@ use {
     std::sync::RwLock
 };
 
+#[derive(Debug)]
 pub struct Actor {
     object: Object,
     last_gen_coord: RwLock<Option<GenCoord>>,

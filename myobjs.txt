@@ -1,0 +1,3 @@
+apriori> --- creating new layer "l3" ---
+apriori> add-obj -l 3,2,7 -v 5,2,1 -m4 -r3
+apriori> add-obj -l -3,-2,-7 -v 5,-2,-1 -m4 -r3

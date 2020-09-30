@@ -71,6 +71,7 @@ pub struct ContextChangeParams {
     pub time_range: TimeRange,
 }
 
+#[derive(Debug)]
 pub struct Context {
     session_id: SessionId,
     layer_id: LayerId,
@@ -181,9 +182,20 @@ impl Context {
                         let start_time = time_bounds.min.as_absolute_time();
                         let end_time = from.as_absolute_time();
 
-                        let time_range = TimeRange::with_bounds(start_time, end_time);
-
                         let track_part_info = obj_space.get_data_payload_mut(id);
+
+                        if start_time >= end_time {
+                            actor.set_last_gen_coord(
+                                GenCoord::new(
+                                    start_time,
+                                    track_part_info.start_location.clone(),
+                                    track_part_info.start_velocity.clone()
+                                )
+                            );
+                            return false;
+                        }
+
+                        let time_range = TimeRange::with_bounds(start_time, end_time);
 
                         let last_gen_coord = GenCoord::new(
                             start_time,
@@ -489,7 +501,7 @@ impl Context {
 
     fn compute_tracks(&mut self, storage_mgr: StorageManager, interrupter: mpsc::Receiver<()>) -> Result<()> {
         let mut is_interrupted = false;
-        let mut checker = collision::CollisionChecker::new();
+        let mut checker = collision::CollisionChecker::new(self);
 
         let mut uncomputed = self.actors().keys().cloned().collect::<HashSet<_>>();
         while !uncomputed.is_empty() && !is_interrupted {

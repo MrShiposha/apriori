@@ -66,6 +66,7 @@ impl ObjectCollision {
         let last_gen_coord = self.last_gen_coord(context);
 
         let step = t.as_absolute_time() - last_gen_coord.time();
+
         CollidingGenCoords {
             start: last_gen_coord.clone(),
             end: super::next_gen_coord(&last_gen_coord, step)
@@ -114,16 +115,18 @@ impl Hash for ObjectCollision {
 }
 
 #[derive(Debug)]
-pub struct CollisionChecker {
+pub struct CollisionChecker<'ctx> {
+    context: &'ctx Context,
     collisions: PossibleCollisionsGraph,
     collision_paths: HashMap<ObjectId, CollidingPath>,
     min_t: RelativeTime,
     max_t: RelativeTime,
 }
 
-impl CollisionChecker {
-    pub fn new() -> Self {
+impl<'ctx> CollisionChecker<'ctx> {
+    pub fn new(context: &'ctx Context) -> Self {
         Self {
+            context,
             collisions: PossibleCollisionsGraph::new(),
             collision_paths: HashMap::new(),
             min_t: RelativeTime::INFINITY,
@@ -152,14 +155,11 @@ impl CollisionChecker {
                 }
 
                 let object_id = space.get_data_payload(track_part_id).object_id;
-                let mut path = self.collision_paths.get_mut(&object_id);
 
-                if let Some(ref mut path) = path {
-                    let t = space.get_data_mbr(track_part_id).bounds(0).min;
+                let path = self.collision_paths.get_mut(&object_id);
 
-                    if path.is_in_bounds(t) {
-                        path.add_track_part(space, track_part_id);
-                    }
+                if let Some(path) = path {
+                    path.add_track_part(space, track_part_id);
                 }
             }
         );
@@ -170,37 +170,42 @@ impl CollisionChecker {
     }
 
     fn add_path(&mut self, space: &TracksSpace, object_id: ObjectId, track_part_id: TrackPartId) {
-        let (min_t, max_t) = match self.collision_paths.entry(object_id) {
+        let time_bounds = space.get_data_mbr(track_part_id).bounds(0);
+
+        if time_bounds.min < self.min_t {
+            self.min_t = time_bounds.min;
+        }
+
+        if time_bounds.max > self.max_t {
+            self.max_t = time_bounds.max;
+        }
+
+        match self.collision_paths.entry(object_id) {
             Entry::Vacant(entry) => {
-                let mut path = CollidingPath::new();
-                let time_bounds = path.add_track_part(space, track_part_id);
-
+                let path = CollidingPath::new();
                 entry.insert(path);
-
-                time_bounds
             }
-            Entry::Occupied(mut entry) => {
-                entry.get_mut().add_track_part(space, track_part_id)
-            }
+            _ => {}
         };
-
-        if min_t < self.min_t {
-            self.min_t = min_t;
-        }
-
-        if max_t > self.max_t {
-            self.max_t = max_t;
-        }
     }
 
     fn add_edge(&mut self, lhs: ObjectId, rhs: ObjectId) {
         self.collisions.add_edge(lhs, rhs, ());
     }
+
+    pub fn min_t(&self) -> RelativeTime {
+        self.min_t
+    }
+
+    pub fn max_t(&self) -> RelativeTime {
+        self.max_t
+    }
 }
 
-impl InsertHandler<Coord, TrackPartInfo> for Arc<RwLock<CollisionChecker>> {
+impl<'ctx> InsertHandler<Coord, TrackPartInfo> for Arc<RwLock<CollisionChecker<'ctx>>> {
     fn before_insert(&mut self, space: &TracksSpace, id: TrackPartId) {
-        let object_id = space.get_data_payload(id).object_id;
+        let obj_track_part = space.get_data_payload(id);
+        let object_id = obj_track_part.object_id;
         let mbr = space.get_data_mbr(id);
 
         self.write().unwrap().add_path(space, object_id, id);
@@ -209,13 +214,46 @@ impl InsertHandler<Coord, TrackPartInfo> for Arc<RwLock<CollisionChecker>> {
             space,
             mbr,
             |obj_space, partner_track_id| {
-                let partner_id = obj_space.get_data_payload(partner_track_id).object_id;
-                let partner_max_t = obj_space.get_data_mbr(partner_track_id).bounds(0).max;
+                let partner_track_part = obj_space.get_data_payload(partner_track_id);
+                let partner_id = partner_track_part.object_id;
+
+                let partner_mbr = obj_space.get_data_mbr(partner_track_id);
+                let partner_max_t = partner_mbr.bounds(0).max;
+                let partner_min_t = partner_mbr.bounds(0).min;
 
                 if obj_space.is_removed(&partner_track_id)
                 || partner_id == object_id
                 || abs_diff_eq![mbr.bounds(0).min, partner_max_t, epsilon = super::EPS] {
                     return;
+                }
+
+                if abs_diff_eq![mbr.bounds(0).min, partner_min_t, epsilon = super::EPS] {
+                    let t = partner_min_t;
+
+                    let obj_location = Context::location(
+                        mbr,
+                        obj_track_part,
+                        t
+                    );
+
+                    let partner_location = Context::location(
+                        partner_mbr,
+                        partner_track_part,
+                        t
+                    );
+
+                    let radius_sum = {
+                        let read = self.read().unwrap();
+                        let obj_radius = read.context.actor(&object_id).object().radius();
+                        let partner_radius = read.context.actor(&partner_id).object().radius();
+
+                        obj_radius + partner_radius
+                    };
+                    let distance = (obj_location - partner_location).norm() - radius_sum;
+
+                    if abs_diff_eq!(distance, 0.0, epsilon = super::EPS) {
+                        return;
+                    }
                 }
 
                 let mut write = self.write().unwrap();
@@ -242,22 +280,11 @@ impl CollidingPath {
         }
     }
 
-    pub fn min_t(&self) -> RelativeTime {
-        self.min_t
-    }
-
-    pub fn max_t(&self) -> RelativeTime {
-        self.max_t
-    }
-
-    pub fn is_in_bounds(&self, t: RelativeTime) -> bool {
-        self.min_t <= t && t <= self.max_t
-    }
-
     /// Returns track part time bounds
-    fn add_track_part(&mut self, space: &TracksSpace, track_part_id: TrackPartId) -> (RelativeTime, RelativeTime) {
-        let new_min_t = space.get_data_mbr(track_part_id).bounds(0).min;
-        let new_max_t = space.get_data_mbr(track_part_id).bounds(0).max;
+    fn add_track_part(&mut self, space: &TracksSpace, track_part_id: TrackPartId) {
+        let mbr = space.get_data_mbr(track_part_id);
+        let new_min_t = mbr.bounds(0).min;
+        let new_max_t = mbr.bounds(0).max;
         let mid_t = (new_min_t + new_max_t) / 2.0;
 
         if new_min_t < self.min_t {
@@ -271,17 +298,6 @@ impl CollidingPath {
         if let Err(insert_idx) = self.track_part_idx_helper(space, mid_t) {
             self.track_part_ids.insert(insert_idx, track_part_id);
         }
-
-        (new_min_t, new_max_t)
-
-        // match self.track_part_ids.binary_search_by(|&item| {
-        //     let item_t = space.get_data_mbr(item).bounds(0).min;
-
-        //     item_t.partial_cmp(&new_t).unwrap()
-        // }) {
-        //     Err(idx) => self.track_part_ids.insert(idx, track_part_id),
-        //     Ok(_) => {}
-        // }
     }
 
     pub fn sort_track_parts(&mut self, space: &TracksSpace) {
@@ -294,7 +310,7 @@ impl CollidingPath {
     }
 
     pub fn track_part_idx(&self, space: &TracksSpace, t: RelativeTime) -> TrackPartIdx {
-        self.track_part_idx_helper(space, t).expect("track must not contain any holes")
+        self.track_part_idx_helper(space, t).expect("track part must be found")
     }
 
     fn track_part_idx_helper(
@@ -302,8 +318,6 @@ impl CollidingPath {
         space: &TracksSpace,
         t: RelativeTime
     ) -> std::result::Result<TrackPartIdx, TrackPartIdx> {
-        debug_assert!(self.min_t <= t && t <= self.max_t);
-
         self.track_part_ids.binary_search_by(|&item| {
             let bounds = space.get_data_mbr(item).bounds(0);
 
@@ -315,6 +329,14 @@ impl CollidingPath {
                 Ordering::Greater
             }
         })
+    }
+
+    pub fn min_t(&self) -> RelativeTime {
+        self.min_t
+    }
+
+    pub fn max_t(&self) -> RelativeTime {
+        self.max_t
     }
 
     pub fn track_part_id(&self, space: &TracksSpace, t: RelativeTime) -> TrackPartId {

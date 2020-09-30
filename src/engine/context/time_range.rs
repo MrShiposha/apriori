@@ -14,7 +14,11 @@ impl TimeRange {
     }
 
     pub fn with_bounds(start: chrono::Duration, end: chrono::Duration) -> Self {
-        assert!(start < end);
+        if start >= end {
+            println!("OH MY");
+        }
+
+        assert!(start < end, "start: {}, end: {}", start, end);
 
         Self { start, end }
     }
